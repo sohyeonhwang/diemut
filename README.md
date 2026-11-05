@@ -164,6 +164,9 @@ On Windows, `~` means `C:\Users\<your name>`. After these downloads, `diemut` wo
 3. **New file…** starts another file without going back to the start screen.
 
 **Listening and correcting.** Once a transcription has finished (or you've pressed Stop in live mode), click any paragraph. It's highlighted, and a panel opens below the transcript with the paragraph's audio bar (its waveform, plus half a second either side) and its text:
+
+![The correction panel: a paragraph open below the transcript, with some words selected and the matching stretch highlighted on its waveform](docs/correct.png)
+
 - **▶ Play / ‖ Pause** plays the paragraph from the red playhead. Pausing keeps your place, and Play carries on from there.
 - **Select some words** in the text box and press **Ctrl+Space** to hear just those words, from half a second before to half a second after. The matching stretch is tinted on the audio bar.
 - **Click the audio bar** to play from that point. **Drag across it** to play a stretch; the words in that stretch are highlighted in the text.
