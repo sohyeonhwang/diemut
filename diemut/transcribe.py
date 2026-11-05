@@ -63,6 +63,11 @@ class AudioClip:
         else:
             self.parts.append([offset, [data], len(data), None])
 
+    @property
+    def end(self):
+        """Seconds from the start of the session to the end of the last audio kept."""
+        return max((p[0] + p[2] / SAMPLE_RATE for p in self.parts), default=0.0)
+
     def slice(self, start, end):
         """Audio between start and end seconds as float32 (silence where nothing was kept)."""
         start = max(0.0, start)
@@ -147,7 +152,8 @@ class SpeechToText:
 # --------------------------------------------------------------------------- #
 # File transcription
 # --------------------------------------------------------------------------- #
-def file_worker(stt, path, model_name, language, emit, stop_event):
+def file_worker(stt, path, model_name, language, emit, stop_event, num_speakers=None):
+    """num_speakers: how many people speak in the file, if the person said; or None."""
     try:
         from faster_whisper import decode_audio
         model = stt.load(model_name, lambda m: emit("status", m))
@@ -180,24 +186,54 @@ def file_worker(stt, path, model_name, language, emit, stop_event):
             return
 
         # Speaker labels
+        if num_speakers == 1:
+            emit("speakers", ([0] * len(words), 1))
+            emit("done", _DONE)
+            return
         emit("stage", "speakers")
         try:
             speakers.ensure_models(lambda m: emit("status", m))
-            emit("status", "Finding speakers…")
-            turns = speakers.diarize(audio, lambda pct: emit("progress", pct),
-                                     stop_event.is_set)
+            audio_path = speakers.save_audio(audio)
         except Exception as exc:
             emit("done", f"Done, but speaker labels didn't work: {exc}")
             return
-        if turns is None:
-            emit("done", "Cancelled during speaker labelling. The transcript is kept.")
-            return
-        ids, count = speakers.assign_speakers(words, turns)
-        emit("speakers", (ids, count))
-        emit("done", "Done. Click a paragraph to listen and correct it."
-                     + (" Click a name to rename a speaker." if count > 1 else ""))
+        del audio   # free it while speakers are found; playback has its own copy in clip
+        emit("done", _label_speakers(audio_path, words, num_speakers, emit, stop_event))
     except Exception as exc:
         emit("error", str(exc))
+
+
+def speaker_worker(clip, duration, pieces, num_speakers, emit, stop_event):
+    """Find speakers again for a finished file transcript, keeping its text."""
+    try:
+        if num_speakers == 1:
+            emit("speakers", ([0] * len(pieces), 1))
+            emit("done", _DONE)
+            return
+        emit("stage", "speakers")
+        speakers.ensure_models(lambda m: emit("status", m))
+        audio_path = speakers.save_audio(clip.slice(0.0, duration))
+        emit("done", _label_speakers(audio_path, pieces, num_speakers, emit, stop_event))
+    except Exception as exc:
+        emit("error", str(exc))
+
+
+_DONE = "Done. Click a paragraph to listen and correct it."
+
+
+def _label_speakers(audio_path, pieces, num_speakers, emit, stop_event):
+    """Find speakers in the saved audio and send their ids. Returns the "done" message."""
+    try:
+        emit("status", "Finding speakers…")
+        turns = speakers.diarize(audio_path, lambda pct: emit("progress", pct),
+                                 stop_event.is_set, num_speakers)
+    except Exception as exc:
+        return f"Done, but speaker labels didn't work: {exc}"
+    if turns is None:
+        return "Cancelled during speaker labelling. The transcript is kept."
+    ids, count = speakers.assign_speakers(pieces, turns)
+    emit("speakers", (ids, count))
+    return _DONE + (" Click a name to rename or merge speakers." if count > 1 else "")
 
 
 def _transcribe_words(model, audio, duration, language, emit, stop_event):

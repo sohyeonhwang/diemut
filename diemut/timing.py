@@ -95,34 +95,56 @@ def timed_spans(pieces, text):
     return [(a, b, s, e) for (_, a, b), (s, e, _) in zip(tokens, times)]
 
 
-def retime(pieces, text):
+def retime_spans(pieces, text):
     """New pieces for a corrected paragraph, keeping the times of unchanged words.
 
-    pieces: the paragraph's original pieces. text: the corrected text.
-    Every new piece takes the first original piece's speaker.
+    pieces: the paragraph's original pieces. text: the corrected text, where a
+    line break starts a new paragraph. Every new piece takes the first original
+    piece's speaker, and the first one keeps the paragraph's manual "par" mark.
+
+    Returns [(piece, char_start, char_end)]: where each piece's text is in text.
     """
     if not pieces:
         return []
     speaker = pieces[0].get("speaker")
     spaceless = is_spaceless(pieces, text)
     old = original_words(pieces, spaceless)
-    tokens = [t for t, _, _ in tokenize(text, spaceless)]
+    tokens = tokenize(text, spaceless)
     if not tokens:
         return []
-    times = align(old, tokens, pieces[0]["start"], pieces[-1]["end"])
-    if not spaceless:
-        return [{"start": s, "end": e, "text": " " + tok, "speaker": speaker}
-                for tok, (s, e, _) in zip(tokens, times)]
+    times = align(old, [t for t, _, _ in tokens], pieces[0]["start"], pieces[-1]["end"])
+    first_word = {k: i for i, (_, _, _, k) in reversed(list(enumerate(old)))}
 
-    # Without spaces, join characters back up: kept characters from the same
-    # original piece, and runs of new characters, each become one piece.
-    out, last_key, last_kept = [], None, None
-    for tok, (s, e, kept) in zip(tokens, times):
-        key = ("kept", old[kept][3]) if kept is not None else ("new", None)
-        if out and key == last_key and (key[0] == "new" or kept == last_kept + 1):
-            out[-1]["text"] += tok
-            out[-1]["end"] = e
+    out, prev_end, last = [], 0, None
+    for (tok, a, b), (start, end, kept) in zip(tokens, times):
+        if not out:
+            mark = pieces[0].get("par")
+        elif "\n" in text[prev_end:a]:
+            mark = "start"
+        elif kept is not None and first_word.get(old[kept][3]) == kept:
+            mark = pieces[old[kept][3]].get("par")   # e.g. a "join" from an earlier merge
         else:
-            out.append({"start": s, "end": e, "text": tok, "speaker": speaker})
-        last_key, last_kept = key, kept
+            mark = None
+        prev_end = b
+        # Without spaces, join characters back up: kept characters from the same
+        # original piece, and runs of new characters, each become one piece.
+        key = ("kept", old[kept][3]) if kept is not None else ("new", None)
+        if (spaceless and out and mark is None and key == last[0]
+                and (key[0] == "new" or kept == last[1] + 1)):
+            piece, a0, _ = out[-1]
+            piece["text"] += tok
+            piece["end"] = end
+            out[-1] = (piece, a0, b)
+        else:
+            piece = {"start": start, "end": end, "text": tok if spaceless else " " + tok,
+                     "speaker": speaker}
+            if mark:
+                piece["par"] = mark
+            out.append((piece, a, b))
+        last = (key, kept)
     return out
+
+
+def retime(pieces, text):
+    """retime_spans without the character positions: just the new pieces."""
+    return [piece for piece, _, _ in retime_spans(pieces, text)]

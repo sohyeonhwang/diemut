@@ -1,14 +1,18 @@
 """Speaker labels (sherpa-onnx) and pause-based paragraph grouping.
 
 A transcript is a list of "pieces": dicts with start, end, text and speaker.
-Both file and live transcripts use one piece per word.
+Both file and live transcripts use one piece per word. A piece may also have
+"par": "start" (always begin a paragraph here) or "join" (never begin one here),
+set when someone splits or merges paragraphs by hand.
 """
 
 import bisect
+import multiprocessing
 import os
 import shutil
 import tarfile
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -28,9 +32,6 @@ SEGMENTATION_URL = f"{_RELEASES}/speaker-segmentation-models/sherpa-onnx-pyannot
 SEGMENTATION_FILE = MODEL_DIR / "sherpa-onnx-pyannote-segmentation-3-0" / "model.onnx"
 EMBEDDING_URL = f"{_RELEASES}/speaker-recongition-models/nemo_en_titanet_small.onnx"
 EMBEDDING_FILE = MODEL_DIR / "nemo_en_titanet_small.onnx"
-
-_diarizer = None
-
 
 # --------------------------------------------------------------------------- #
 # Model download
@@ -76,44 +77,110 @@ def ensure_models(status):
 # --------------------------------------------------------------------------- #
 # Diarization
 # --------------------------------------------------------------------------- #
-def _get_diarizer():
-    global _diarizer
-    if _diarizer is None:
-        import sherpa_onnx
-        threads = max(1, min(4, (os.cpu_count() or 2) // 2))
-        config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
-            segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
-                pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
-                    model=str(SEGMENTATION_FILE)),
-                num_threads=threads),
-            embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
-                model=str(EMBEDDING_FILE), num_threads=threads),
-            clustering=sherpa_onnx.FastClusteringConfig(
-                num_clusters=-1, threshold=SPEAKER_THRESHOLD),
-        )
-        if not config.validate():
-            raise RuntimeError("The speaker models are missing or damaged. "
-                               f"Delete {MODEL_DIR} and try again.")
-        _diarizer = sherpa_onnx.OfflineSpeakerDiarization(config)
-    return _diarizer
+def _get_diarizer(num_speakers=None):
+    """num_speakers: how many people speak, if known; otherwise they're counted."""
+    import sherpa_onnx
+    threads = max(1, min(4, (os.cpu_count() or 2) // 2))
+    config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+        segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+            pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
+                model=str(SEGMENTATION_FILE)),
+            num_threads=threads),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+            model=str(EMBEDDING_FILE), num_threads=threads),
+        clustering=sherpa_onnx.FastClusteringConfig(
+            num_clusters=num_speakers or -1, threshold=SPEAKER_THRESHOLD),
+    )
+    if not config.validate():
+        raise RuntimeError("The speaker models are missing or damaged. "
+                           f"Delete {MODEL_DIR} and try again.")
+    return sherpa_onnx.OfflineSpeakerDiarization(config)
 
 
-def diarize(audio, progress, should_stop):
-    """Find who speaks when. audio: 16 kHz mono float32 numpy array.
+def save_audio(audio):
+    """Write audio to a temporary file for diarize(), which deletes it."""
+    import numpy as np
+    # Clear out files left behind if diemut was ever closed by force mid-way.
+    for old in Path(tempfile.gettempdir()).glob("diemut-*.npy"):
+        try:
+            if time.time() - old.stat().st_mtime > 24 * 3600:
+                old.unlink()
+        except OSError:
+            pass
+    fd, path = tempfile.mkstemp(prefix="diemut-", suffix=".npy")
+    with os.fdopen(fd, "wb") as f:
+        np.save(f, np.asarray(audio, dtype=np.float32))
+    return path
 
+
+def diarize(audio_path, progress, should_stop, num_speakers=None):
+    """Find who speaks when, in the audio saved by save_audio (16 kHz mono float32).
+
+    sherpa-onnx holds Python's GIL for the whole run, which would freeze the
+    window, so the work happens in a separate process. The file is deleted
+    afterwards, and cancelling ends the process straight away.
+
+    num_speakers: how many people speak, if known.
     Returns a list of (start, end, speaker_id), or None if cancelled.
     """
-    diarizer = _get_diarizer()
+    proc = None
+    try:
+        ctx = multiprocessing.get_context("spawn")
+        receive, send = ctx.Pipe(duplex=False)
+        proc = ctx.Process(target=_diarize_child, args=(audio_path, send, num_speakers),
+                           daemon=True)
+        proc.start()
+        send.close()
+        while True:
+            if should_stop():
+                return None
+            if not receive.poll(0.1):
+                if not proc.is_alive() and not receive.poll():
+                    raise RuntimeError("Speaker labelling stopped unexpectedly.")
+                continue
+            try:
+                kind, payload = receive.recv()
+            except EOFError:
+                raise RuntimeError("Speaker labelling stopped unexpectedly.") from None
+            if kind == "progress":
+                progress(payload)
+            elif kind == "done":
+                return payload
+            else:
+                raise RuntimeError(payload)
+    finally:
+        if proc is not None:
+            if proc.is_alive():
+                proc.terminate()
+            proc.join(5)
+        for _ in range(20):   # on Windows the file stays locked until the process has gone
+            try:
+                os.remove(audio_path)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                time.sleep(0.1)
 
-    def callback(done, total):
-        if total:
-            progress(done / total * 100)
-        return 1 if should_stop() else 0
 
-    result = diarizer.process(audio, callback=callback).sort_by_start_time()
-    if should_stop():
-        return None
-    return [(r.start, r.end, r.speaker) for r in result]
+def _diarize_child(audio_path, send, num_speakers):
+    """Runs in the separate process started by diarize()."""
+    try:
+        import numpy as np
+        audio = np.load(audio_path, mmap_mode="r")
+        diarizer = _get_diarizer(num_speakers)
+
+        def callback(done, total):
+            if total:
+                send.send(("progress", done / total * 100))
+            return 0
+
+        result = diarizer.process(audio, callback=callback).sort_by_start_time()
+        send.send(("done", [(r.start, r.end, r.speaker) for r in result]))
+    except Exception as exc:
+        send.send(("error", str(exc)))
+    finally:
+        send.close()
 
 
 def assign_speakers(pieces, turns):
@@ -162,6 +229,10 @@ def assign_speakers(pieces, turns):
 def starts_new_paragraph(prev, cur, paragraph_len):
     if prev is None:
         return True
+    # A manual split or merge (from the correction panel) overrides the pause rule.
+    mark = cur.get("par")
+    if mark in ("start", "join"):
+        return mark == "start"
     if cur["start"] - prev["end"] > PARAGRAPH_PAUSE:
         return True
     return paragraph_len > PARAGRAPH_SOFT_MAX and prev["text"].rstrip().endswith(SENTENCE_ENDS)

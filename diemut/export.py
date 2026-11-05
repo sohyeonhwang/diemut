@@ -11,23 +11,30 @@ def fmt_time(seconds, with_ms=False):
     return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}" if with_ms else f"{h:02d}:{m:02d}:{s:02d}"
 
 
+# Timestamps in .txt and .docx: none, one per speaker turn, or one per paragraph.
+# Without speaker labels, each paragraph counts as a turn.
+TIMESTAMPS = ("turns", "paragraphs", "none")
+
+
 def _name(names, speaker):
     return names.get(speaker, f"Speaker {speaker + 1}")
 
 
 def export_txt(path, pieces, names, use_speakers, timestamps):
+    """timestamps: one of TIMESTAMPS."""
     lines = []
     for block in group_blocks(pieces, use_speakers):
         if block["speaker"] is not None:
             header = _name(names, block["speaker"])
-            if timestamps:
+            if timestamps == "turns":
                 header += f"  [{fmt_time(block['start'])}]"
             lines += [header]
             for par in block["paragraphs"]:
-                lines += [par["text"], ""]
+                prefix = f"[{fmt_time(par['start'])}] " if timestamps == "paragraphs" else ""
+                lines += [prefix + par["text"], ""]
         else:
             for par in block["paragraphs"]:
-                prefix = f"[{fmt_time(par['start'])}] " if timestamps else ""
+                prefix = f"[{fmt_time(par['start'])}] " if timestamps != "none" else ""
                 lines += [prefix + par["text"], ""]
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines).rstrip() + "\n")
@@ -73,7 +80,35 @@ def export_vtt(path, pieces, names, use_speakers):
         f.write("\n".join(out))
 
 
+def export_mp3(path, clip):
+    """Save a live session's audio as a mono MP3 (64 kbit/s, about 28 MB an hour).
+
+    Paused stretches are silence, so times in the file match the transcript's.
+    Uses the FFmpeg that PyAV (installed with faster-whisper) bundles.
+    """
+    import av
+    import numpy as np
+
+    from .transcribe import SAMPLE_RATE
+    with av.open(path, "w", format="mp3") as out:
+        stream = out.add_stream("libmp3lame", rate=SAMPLE_RATE)
+        stream.bit_rate = 64000
+        stream.layout = "mono"
+        t, end, pts = 0.0, clip.end, 0
+        while t < end:   # a minute at a time, to keep memory low on long sessions
+            chunk = np.clip(clip.slice(t, min(end, t + 60.0)), -1.0, 1.0).astype(np.float32)
+            frame = av.AudioFrame.from_ndarray(chunk.reshape(1, -1), format="fltp", layout="mono")
+            frame.rate, frame.pts = SAMPLE_RATE, pts
+            pts += len(chunk)
+            for packet in stream.encode(frame):
+                out.mux(packet)
+            t += 60.0
+        for packet in stream.encode(None):
+            out.mux(packet)
+
+
 def export_docx(path, pieces, names, use_speakers, timestamps, title, meta_lines):
+    """timestamps: one of TIMESTAMPS."""
     import docx
     from docx.shared import Pt, RGBColor
 
@@ -94,16 +129,21 @@ def export_docx(path, pieces, names, use_speakers, timestamps, title, meta_lines
             head.paragraph_format.space_before = Pt(10)
             head.paragraph_format.keep_with_next = True
             head.add_run(_name(names, block["speaker"])).bold = True
-            if timestamps:
+            if timestamps == "turns":
                 ts = head.add_run(f"   {fmt_time(block['start'])}")
                 ts.font.size = Pt(9)
                 ts.font.color.rgb = grey
             for par in block["paragraphs"]:
-                document.add_paragraph(par["text"])
+                p = document.add_paragraph()
+                if timestamps == "paragraphs":
+                    ts = p.add_run(f"{fmt_time(par['start'])}   ")
+                    ts.font.size = Pt(9)
+                    ts.font.color.rgb = grey
+                p.add_run(par["text"])
         else:
             for par in block["paragraphs"]:
                 p = document.add_paragraph()
-                if timestamps:
+                if timestamps != "none":
                     ts = p.add_run(f"{fmt_time(par['start'])}   ")
                     ts.font.size = Pt(9)
                     ts.font.color.rgb = grey

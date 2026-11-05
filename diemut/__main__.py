@@ -1,9 +1,12 @@
 """Start diemut:  `diemut`  or  `python -m diemut`."""
 
+import multiprocessing
 import sys
 
 
 def main():
+    # Speaker labelling runs in a separate process (see speakers.diarize).
+    multiprocessing.freeze_support()
     if sys.platform == "win32":
         import ctypes
         try:  # sharp text on high-resolution Windows screens
