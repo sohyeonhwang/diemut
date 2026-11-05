@@ -6,7 +6,7 @@ from tkinter import messagebox, ttk
 
 from . import export, playback, transcribe
 from .export import fmt_time
-from .theme import ACCENT, BG, BORDER, BORDER_STRONG, FONTS, MUTED, TEXT, TEXT2
+from .theme import ACCENT, BG, BORDER, BORDER_STRONG, FONTS, MUTED, TEXT, TEXT2, display_scale
 
 SPEAKER_COUNTS = (None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 
@@ -14,11 +14,6 @@ SPEAKER_COUNTS = (None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 def count_label(n):
     return "Not sure (diemut counts them)" if n is None else \
         f"{n} {'person' if n == 1 else 'people'}"
-
-
-def _scale(widget):
-    """The display scaling (1.5 at 150%)."""
-    return max(1.0, widget.winfo_fpixels("1i") / 96.0)
 
 
 def tip_window(widget, title, text, x, y):
@@ -263,7 +258,7 @@ def ask_speaker_count(parent, title, message, action):
     """A small dialog asking how many people speak. Returns (confirmed, count or None)."""
     win = make_dialog(parent, title)
     tk.Label(win, text=message, font=FONTS["body"], fg=TEXT, bg=BG, justify="left",
-             anchor="w", wraplength=int(380 * _scale(parent))).pack(fill="x")
+             anchor="w", wraplength=int(380 * display_scale(parent))).pack(fill="x")
     box = ttk.Combobox(win, style="Subtle.TCombobox", state="readonly",
                        font=FONTS["dropdown"], width=30,
                        values=[count_label(n) for n in SPEAKER_COUNTS])
@@ -292,7 +287,7 @@ def ask_choice(parent, title, message, choices):
     is the main one (Enter). Returns the key chosen, or None if it was closed (Esc)."""
     win = make_dialog(parent, title)
     tk.Label(win, text=message, font=FONTS["body"], fg=TEXT, bg=BG, justify="left",
-             anchor="w", wraplength=int(380 * _scale(parent))).pack(fill="x")
+             anchor="w", wraplength=int(380 * display_scale(parent))).pack(fill="x")
     result = {}
 
     def choose(key):
@@ -348,7 +343,7 @@ def settings_window(app):
         win.lift()
         return
     win = app._settings_win = make_dialog(app.root, "Settings")
-    wrap = int(340 * _scale(win))
+    wrap = int(340 * display_scale(win))
     tk.Label(win, text="Settings", font=FONTS["header"], fg=TEXT, bg=BG,
              anchor="w").pack(fill="x", pady=(0, 10))
 

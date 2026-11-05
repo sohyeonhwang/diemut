@@ -16,7 +16,8 @@ def fmt_time(seconds, with_ms=False):
 TIMESTAMPS = ("turns", "paragraphs", "none")
 
 
-def _name(names, speaker):
+def speaker_name(names, speaker):
+    """A speaker's name: the one given, or Speaker 1, Speaker 2…"""
     return names.get(speaker, f"Speaker {speaker + 1}")
 
 
@@ -25,7 +26,7 @@ def export_txt(path, pieces, names, use_speakers, timestamps):
     lines = []
     for block in group_blocks(pieces, use_speakers):
         if block["speaker"] is not None:
-            header = _name(names, block["speaker"])
+            header = speaker_name(names, block["speaker"])
             if timestamps == "turns":
                 header += f"  [{fmt_time(block['start'])}]"
             lines += [header]
@@ -71,7 +72,7 @@ def _subtitles(pieces, names, use_speakers):
     """(start, end, text, speaker name or None) for each subtitle."""
     for cue in _make_cues(pieces, use_speakers):
         text = " ".join(cue["text"].split()) if " " in cue["text"] else cue["text"].strip()
-        name = _name(names, cue["speaker"]) if cue["speaker"] is not None else None
+        name = speaker_name(names, cue["speaker"]) if cue["speaker"] is not None else None
         yield cue["start"], max(cue["end"], cue["start"] + 0.01), text, name
 
 
@@ -144,7 +145,7 @@ def export_docx(path, pieces, names, use_speakers, timestamps, title, meta_lines
             head = document.add_paragraph()
             head.paragraph_format.space_before = Pt(10)
             head.paragraph_format.keep_with_next = True
-            head.add_run(_name(names, block["speaker"])).bold = True
+            head.add_run(speaker_name(names, block["speaker"])).bold = True
             if timestamps == "turns":
                 ts = head.add_run(f"   {fmt_time(block['start'])}")
                 ts.font.size = Pt(9)

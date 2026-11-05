@@ -27,6 +27,11 @@ PLAYING = "#ffff99"   # behind the word being played: a faint #FFFF00
 FONTS = {}
 
 
+def display_scale(widget):
+    """The display scaling: 1.0 at 100%, 1.5 at 150% (never below 1)."""
+    return max(1.0, widget.winfo_fpixels("1i") / 96.0)
+
+
 def shade(color, factor):
     """color ("#rrggbb") darkened by factor (0.9 = 10% darker)."""
     r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))

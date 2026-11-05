@@ -21,8 +21,8 @@ from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
 from .paragraphs import ParagraphsMixin
 from .theme import (ACCENT, BG, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK, MIC_ICON,
-                    MUTED, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, file_cursor,
-                    setup_style)
+                    MUTED, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, display_scale,
+                    file_cursor, setup_style)
 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
                "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv")
@@ -37,6 +37,7 @@ class App(EditorMixin, ParagraphsMixin):
         root.configure(bg=BG)
         self._set_icon()
         setup_style(root)
+        self._scale = display_scale(root)
 
         self.ui_q = queue.Queue()
         self.session_id = 0
@@ -159,7 +160,7 @@ class App(EditorMixin, ParagraphsMixin):
     def _fit_window(self):
         """Size the window for the screen's display scaling (e.g. 150% on Windows)."""
         self.root.update_idletasks()
-        scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
+        scale = self._scale
         pad = int(90 * scale)
         width = max(int(780 * scale), self._start_inner.winfo_reqwidth() + pad)
         height = max(int(580 * scale), self._start_inner.winfo_reqheight() + pad)
@@ -270,8 +271,7 @@ class App(EditorMixin, ParagraphsMixin):
 
     def _load_logo(self):
         """The icon at about desktop-icon size (48 px at 100% display scaling)."""
-        scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
-        size = min((48, 60, 72, 96), key=lambda n: abs(n - 48 * scale))
+        size = min((48, 60, 72, 96), key=lambda n: abs(n - 48 * self._scale))
         try:
             from importlib.resources import files
             return tk.PhotoImage(file=str(files("diemut") / "assets" / f"icon_{size}.png"))
@@ -578,8 +578,6 @@ class App(EditorMixin, ParagraphsMixin):
         self.source_path = None
         self.session_start = dt.datetime.now()
         self.live_t0 = None
-        self.live_elapsed = 0.0
-        self._r = {"prev": None, "par_len": 0}
         self.audio = None
         self._pars = []
         self.history.clear()
@@ -840,9 +838,9 @@ class App(EditorMixin, ParagraphsMixin):
     def _tick(self):
         if self.mode == "live" and self.live_t0 is not None and self.live_state in (
                 "recording", "paused", "stopping"):
-            self.live_elapsed = time.monotonic() - self.live_t0
-            self.sub_lbl.configure(text=fmt_time(self.live_elapsed))
-            self.mini_time.configure(text=fmt_time(self.live_elapsed))
+            elapsed = fmt_time(time.monotonic() - self.live_t0)
+            self.sub_lbl.configure(text=elapsed)
+            self.mini_time.configure(text=elapsed)
         self.root.after(500, self._tick)
 
     # -------------------------------------------------------- rendering --
@@ -944,7 +942,7 @@ class App(EditorMixin, ParagraphsMixin):
             self.text.delete(ranges[i], ranges[i + 1])
 
     def _speaker_name(self, spk):
-        return self.names.get(spk, f"Speaker {spk + 1}")
+        return export.speaker_name(self.names, spk)
 
     def _bind_speaker(self, tag, spk):
         self.text.tag_bind(tag, "<Button-1>", lambda e: self.open_speakers(spk))
@@ -1361,7 +1359,7 @@ class App(EditorMixin, ParagraphsMixin):
                   else self.pieces)
         try:
             if kind == "txt":
-                export.export_txt(path, pieces, self.names, use_speakers, self._timestamps())
+                export.export_txt(path, pieces, self.names, use_speakers, self.ts_mode)
             elif kind == "vtt":
                 export.export_vtt(path, pieces, self.names, use_speakers)
             elif kind == "srt":
@@ -1376,15 +1374,12 @@ class App(EditorMixin, ParagraphsMixin):
                         f"Language: {lang}"]
                 if self.speaker_count:
                     meta.append(f"Speakers: {self.speaker_count}")
-                export.export_docx(path, pieces, self.names, use_speakers, self._timestamps(),
+                export.export_docx(path, pieces, self.names, use_speakers, self.ts_mode,
                                    f"Transcript – {base}", meta)
         except Exception as exc:
             messagebox.showerror("Export failed", f"diemut couldn't save the file.\n\n{exc}")
             return
         self.status_lbl.configure(text=f"Saved {os.path.basename(path)}")
-
-    def _timestamps(self):
-        return self.ts_mode
 
     def clear(self):
         if self.busy or not self.pieces:

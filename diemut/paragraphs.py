@@ -5,6 +5,8 @@ ParagraphsMixin is part of App (see ui.py) and uses its state: pieces, _pars, se
 the Merge button, and the correction panel's methods.
 """
 
+import bisect
+
 from . import fillers
 
 
@@ -85,10 +87,8 @@ class ParagraphsMixin:
             self.open_editor(k)   # a click, not a text selection (to copy)
 
     # -- merge mode --
-    MODE_HINTS = {
-        "merge": "Click or drag over the paragraphs to merge: next to each other, from the same "
-                 "speaker. Shift+click checks a run. Cancel or Esc stops.",
-    }
+    MERGE_HINT = ("Click or drag over the paragraphs to merge: next to each other, from the "
+                  "same speaker. Shift+click checks a run. Cancel or Esc stops.")
 
     def _set_mode(self, mode):
         """Turn merge mode on ("merge") or off (None)."""
@@ -103,7 +103,7 @@ class ParagraphsMixin:
             self._render_all()      # without the boxes: much faster than deleting each one
         self.text.configure(cursor=self._text_cursor())
         self._update_par_tools()
-        self.status_lbl.configure(text=self.MODE_HINTS.get(mode, ""))
+        self.status_lbl.configure(text=self.MERGE_HINT if mode == "merge" else "")
 
     def toggle_merge_mode(self):
         if self._mode == "merge":
@@ -339,7 +339,11 @@ class ParagraphsMixin:
         """Show fillers and false starts in grey all through the transcript."""
         t = self.text
         drop = fillers.removable(self.pieces)
+        ordered = sorted(drop)
         for k, par in enumerate(self._pars):
+            j = bisect.bisect_left(ordered, par["i0"])
+            if j == len(ordered) or ordered[j] >= par["i1"]:
+                continue        # no fillers here: skip working out where its words are
             ranges = t.tag_ranges(f"ptext:{k}")
             for i, c0, c1 in self._piece_spans(par) if ranges else ():
                 if i in drop:

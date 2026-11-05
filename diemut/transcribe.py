@@ -2,7 +2,7 @@
 
 The workers here run in background threads and report back through
 emit(kind, payload). Kinds: "status", "progress", "stage", "language",
-"duration", "piece", "pending", "started", "reset", "speakers", "done", "error".
+"duration", "audio", "piece", "pending", "started", "reset", "speakers", "done", "error".
 """
 
 import queue
@@ -195,36 +195,17 @@ def file_worker(stt, path, model_name, language, emit, stop_event, num_speakers=
         if not words:
             emit("done", "Done. No speech was found in this file.")
             return
-
-        # Speaker labels
-        if num_speakers == 1:
-            emit("speakers", ([0] * len(words), 1))
-            emit("done", _DONE)
-            return
-        emit("stage", "speakers")
-        try:
-            speakers.ensure_models(lambda m: emit("status", m))
-            audio_path = speakers.save_audio(audio)
-        except Exception as exc:
-            emit("done", f"Done, but speaker labels didn't work: {exc}")
-            return
-        del audio   # free it while speakers are found; playback has its own copy in clip
-        emit("done", _label_speakers(audio_path, words, num_speakers, emit, stop_event))
+        emit("done", _label_speakers(audio, words, num_speakers, emit, stop_event))
     except Exception as exc:
         emit("error", str(exc))
 
 
 def speaker_worker(clip, duration, pieces, num_speakers, emit, stop_event):
-    """Find speakers again for a finished file transcript, keeping its text."""
+    """Find speakers again for a finished transcript (a file, or a live recording after
+    Stop), keeping its text."""
     try:
-        if num_speakers == 1:
-            emit("speakers", ([0] * len(pieces), 1))
-            emit("done", _DONE)
-            return
-        emit("stage", "speakers")
-        speakers.ensure_models(lambda m: emit("status", m))
-        audio_path = speakers.save_audio(clip.slice(0.0, duration))
-        emit("done", _label_speakers(audio_path, pieces, num_speakers, emit, stop_event))
+        emit("done", _label_speakers(clip.slice(0.0, duration), pieces, num_speakers, emit,
+                                     stop_event))
     except Exception as exc:
         emit("error", str(exc))
 
@@ -232,9 +213,16 @@ def speaker_worker(clip, duration, pieces, num_speakers, emit, stop_event):
 _DONE = "Done. Click a paragraph to listen and correct it."
 
 
-def _label_speakers(audio_path, pieces, num_speakers, emit, stop_event):
-    """Find speakers in the saved audio and send their ids. Returns the "done" message."""
+def _label_speakers(audio, pieces, num_speakers, emit, stop_event):
+    """Find who speaks each piece and send their ids ("speakers"). Returns the "done"
+    message. num_speakers: how many people speak, if known (1 skips the models)."""
+    if num_speakers == 1:
+        emit("speakers", ([0] * len(pieces), 1))
+        return _DONE
+    emit("stage", "speakers")
     try:
+        speakers.ensure_models(lambda m: emit("status", m))
+        audio_path = speakers.save_audio(audio)
         emit("status", "Finding speakers…")
         turns = speakers.diarize(audio_path, lambda pct: emit("progress", pct),
                                  stop_event.is_set, num_speakers)
@@ -245,6 +233,16 @@ def _label_speakers(audio_path, pieces, num_speakers, emit, stop_event):
     ids, count = speakers.assign_speakers(pieces, turns)
     emit("speakers", (ids, count))
     return _DONE + (" Click a name to rename or merge speakers." if count > 1 else "")
+
+
+def _word_pieces(seg, offset=0.0):
+    """A piece for each word in a Whisper segment (the whole segment if it has no word
+    timings), with times offset by offset seconds."""
+    words = seg.words or [type("W", (), {"start": seg.start, "end": seg.end, "word": seg.text})]
+    for w in words:
+        if w.word.strip():
+            yield {"start": offset + float(w.start), "end": offset + float(w.end),
+                   "text": w.word, "speaker": None}
 
 
 def _transcribe_words(model, audio, duration, language, emit, stop_event):
@@ -266,11 +264,7 @@ def _transcribe_words(model, audio, duration, language, emit, stop_event):
     for seg in segments:
         if stop_event.is_set():
             break
-        items = seg.words or [type("W", (), {"start": seg.start, "end": seg.end, "word": seg.text})]
-        for w in items:
-            if not w.word.strip():
-                continue
-            piece = {"start": float(w.start), "end": float(w.end), "text": w.word, "speaker": None}
+        for piece in _word_pieces(seg):
             words.append(piece)
             emit("piece", piece)
         if duration:
@@ -432,11 +426,8 @@ def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
         if not seg.text.strip():
             continue
         texts.append(seg.text.strip())
-        items = seg.words or [type("W", (), {"start": seg.start, "end": seg.end, "word": seg.text})]
-        for w in items:
-            if w.word.strip():
-                emit("piece", {"start": offset + float(w.start), "end": offset + float(w.end),
-                               "text": w.word, "speaker": None})
+        for piece in _word_pieces(seg, offset):
+            emit("piece", piece)
     if texts:
         # Auto-detect locks onto the first language heard; Multiple languages never locks.
         if language == AUTO and state["language"] is None:

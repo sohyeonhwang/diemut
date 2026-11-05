@@ -51,8 +51,7 @@ class EditorMixin:
 
     # ----------------------------------------------- listen and correct --
     def _build_editor(self, screen):
-        scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
-        self._scale = scale
+        scale = self._scale
         ed = tk.Frame(screen, bg=SURFACE, highlightthickness=1,
                       highlightbackground=BORDER_STRONG, padx=10, pady=8)
         row = tk.Frame(ed, bg=SURFACE)
