@@ -1,7 +1,7 @@
 """Speaker labels (sherpa-onnx) and pause-based paragraph grouping.
 
 A transcript is a list of "pieces": dicts with start, end, text and speaker.
-File transcripts use one piece per word; live transcripts use one per segment.
+Both file and live transcripts use one piece per word.
 """
 
 import bisect

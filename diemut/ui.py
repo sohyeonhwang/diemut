@@ -10,16 +10,19 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from . import export, speakers, transcribe
+import numpy as np
+
+from . import export, playback, speakers, timing, transcribe
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
 
 # Newer emoji only draw reliably in Tk on Windows; elsewhere use simple symbols.
 WINDOWS = sys.platform == "win32"
-PEN = "🖊" if WINDOWS else "✎"
 MIC_ICON = "🎙" if WINDOWS else "◉"
 FILE_ICON = "🎞" if WINDOWS else "▤"
 LOCK = "🔒 " if WINDOWS else ""
+PLAY_LABEL = "▶ Play"
+PAUSE_LABEL = "‖ Pause"
 
 BG = "#ffffff"
 SURFACE = "#f4f4f2"
@@ -29,9 +32,9 @@ BORDER_STRONG = "#b9b8b1"
 TEXT = "#1f1f1d"
 TEXT2 = "#5f5e5a"
 MUTED = "#8f8e88"
-ACCENT = "#2563c9"
-SUCCESS = "#2e7d4f"
-DANGER = "#d64545"
+ACCENT = "#f4b942"
+SUCCESS = "#4095ad"
+DANGER = "#c90065"
 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
                "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv")
@@ -97,8 +100,13 @@ class App:
         self.live_state = "idle"    # idle, loading, recording, paused, stopping, stopped
         self.busy = False
         self.stage = None
-        self._playing = False
+        self.player = playback.Player()
         self._play_job = None
+        self._loop = False
+        self._region = None        # (start, end) seconds selected on the audio bar or as words
+        self._region_src = None    # "bar" or "text"
+        self._drag = None
+        self._wave_span = (0.0, 0.0)
         self._spk_map = {}
         self.reset_transcript()
 
@@ -114,17 +122,58 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_icon(self):
-        """Window and taskbar icon: the scribe in diemut/assets."""
+        """Window and taskbar icon: the snail in diemut/assets."""
         try:
             from importlib.resources import files
             assets = files("diemut") / "assets"
             if WINDOWS:
-                self.root.iconbitmap(default=str(assets / "icon.ico"))
+                # Only the .ico on Windows (iconphoto() would replace it). Tk itself only
+                # ever passes Windows the .ico's 16 and 32 px images, which Windows then
+                # stretches at 125–150% scaling, so once the window exists, hand Windows
+                # the sizes it actually draws at. Dialogs keep Tk's icon.
+                ico = str(assets / "icon.ico")
+                self.root.iconbitmap(default=ico)
+                self.root.bind("<Map>", lambda e: e.widget is self.root and
+                               self._set_windows_icon(ico), add="+")
+                self.root.after(50, lambda: self._set_windows_icon(ico))
+                return
             self._icons = [tk.PhotoImage(file=str(assets / f"icon_{n}.png"))
                            for n in (256, 48, 32, 16)]
             self.root.iconphoto(True, *self._icons)
         except Exception:
             pass   # a missing icon should never stop diemut from starting
+
+    def _set_windows_icon(self, ico):
+        """Give the window title bar and taskbar icons at the display's scaled sizes."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            user32.LoadImageW.restype = wintypes.HANDLE
+            user32.LoadImageW.argtypes = (wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                          ctypes.c_int, ctypes.c_int, wintypes.UINT)
+            user32.SendMessageW.restype = wintypes.LPARAM
+            user32.SendMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
+                                            wintypes.LPARAM)
+            hwnd = int(self.root.wm_frame(), 16)
+            sm_cxicon, sm_cxsmicon = 11, 49
+            try:   # Windows 10 and later: the sizes for this window's monitor
+                dpi = user32.GetDpiForWindow(hwnd)
+                big = user32.GetSystemMetricsForDpi(sm_cxicon, dpi)
+                small = user32.GetSystemMetricsForDpi(sm_cxsmicon, dpi)
+            except AttributeError:
+                big = user32.GetSystemMetrics(sm_cxicon)
+                small = user32.GetSystemMetrics(sm_cxsmicon)
+            image_icon, lr_loadfromfile, wm_seticon = 1, 0x10, 0x80
+            icons = []
+            for which, size in ((0, small), (1, big)):   # ICON_SMALL, ICON_BIG
+                hicon = user32.LoadImageW(None, ico, image_icon, size, size, lr_loadfromfile)
+                if hicon:
+                    user32.SendMessageW(hwnd, wm_seticon, which, hicon)
+                    icons.append(hicon)
+            self._hicons = icons   # keep the handles alive while the window uses them
+        except Exception:
+            pass   # Tk's own (blurrier) icon stays in place
 
     # ------------------------------------------------------------ style --
     def _setup_style(self):
@@ -157,6 +206,14 @@ class App:
                   foreground=[("disabled", MUTED)],
                   bordercolor=[("disabled", BORDER)],
                   lightcolor=[("active", HOVER)], darkcolor=[("active", HOVER)])
+        # A button that stays pressed while it's on (Loop in the correction panel)
+        style.map("Toggle.TButton",
+                  background=[("disabled", BG), ("pressed", BORDER), ("selected", BORDER),
+                              ("active", HOVER)],
+                  foreground=[("disabled", MUTED), ("selected", ACCENT)],
+                  bordercolor=[("disabled", BORDER), ("selected", ACCENT)],
+                  lightcolor=[("selected", BORDER), ("active", HOVER)],
+                  darkcolor=[("selected", BORDER), ("active", HOVER)])
         style.configure("TCheckbutton", background=BG, foreground=TEXT2, focuscolor=BG,
                         indicatorbackground=BG, indicatorforeground=ACCENT)
         style.map("TCheckbutton", background=[("active", BG)])
@@ -205,7 +262,11 @@ class App:
         inner.place(relx=0.5, rely=0.46, anchor="center")
         self._start_inner = inner
 
-        tk.Label(inner, text=f"Transcribe {PEN}", font=FONTS["title"], bg=BG, fg=TEXT).pack(pady=(0, 8))
+        self._logo = self._load_logo()
+        if self._logo is not None:
+            tk.Label(inner, image=self._logo, bg=BG).pack()
+        tk.Label(inner, text="Transcribe with diemut", font=FONTS["card_title"], bg=BG,
+                 fg=TEXT).pack(pady=(4, 10))
 
         tags = tk.Frame(inner, bg=BG)
         tags.pack(pady=(0, 18))
@@ -267,6 +328,16 @@ class App:
         self.note = tk.Label(inner, text="", font=FONTS["small"], fg=MUTED, bg=BG,
                              wraplength=460, justify="center")
         return screen
+
+    def _load_logo(self):
+        """The icon at about desktop-icon size (48 px at 100% display scaling)."""
+        scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
+        size = min((48, 60, 72, 96), key=lambda n: abs(n - 48 * scale))
+        try:
+            from importlib.resources import files
+            return tk.PhotoImage(file=str(files("diemut") / "assets" / f"icon_{size}.png"))
+        except Exception:
+            return None   # a missing icon should never stop diemut from starting
 
     def _model_label(self, name):
         size = transcribe.model_size(name)
@@ -448,6 +519,7 @@ class App:
         if not self.busy and not self._confirm_discard("quit"):
             return
         self.stop_event.set()
+        self.player.close()
         self.root.destroy()
 
     def _new_session(self):
@@ -792,34 +864,78 @@ class App:
 
     # ----------------------------------------------- listen and correct --
     def _build_editor(self, screen):
+        scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
+        self._scale = scale
         ed = tk.Frame(screen, bg=SURFACE, highlightthickness=1,
                       highlightbackground=BORDER_STRONG, padx=10, pady=8)
         row = tk.Frame(ed, bg=SURFACE)
         row.pack(fill="x")
-        self.play_btn = ttk.Button(row, text="▶ Play", command=self.toggle_play)
+        self.play_btn = ttk.Button(row, text=PLAY_LABEL, width=7, command=self.toggle_play)
         self.play_btn.pack(side="left")
-        self.range_lbl = tk.Label(row, text="", font=FONTS["mono"], fg=TEXT2, bg=SURFACE)
-        self.range_lbl.pack(side="left", padx=(10, 0))
+        self.back_btn = ttk.Button(row, text="⟲ 3 s", command=self.skip_back)
+        self.back_btn.pack(side="left", padx=(6, 0))
+        self.loop_btn = ttk.Button(row, text="Loop", style="Toggle.TButton",
+                                   command=self.toggle_loop)
+        self.loop_btn.pack(side="left", padx=(6, 0))
+        self.speed_box = ttk.Combobox(row, style="Subtle.TCombobox", state="readonly",
+                                      font=FONTS["dropdown"], width=5,
+                                      values=[self._speed_label(s) for s in reversed(playback.SPEEDS)])
+        self.speed_box.set(self._speed_label(1.0))
+        self.speed_box.pack(side="left", padx=(6, 0))
+        Tooltip(self.speed_box, "Playback speed",
+                "Faster and slower speeds keep voices at their normal pitch. "
+                "Ctrl+↓ and Ctrl+↑ change it.")
+        self.speed_box.bind("<<ComboboxSelected>>", self._on_speed)
+        self.time_lbl = tk.Label(row, text="", font=FONTS["mono"], fg=TEXT2, bg=SURFACE)
+        self.time_lbl.pack(side="left", padx=(10, 0))
         self.spk_frame = tk.Frame(row, bg=SURFACE)
         tk.Label(self.spk_frame, text="Speaker", fg=TEXT2, bg=SURFACE,
                  font=FONTS["body"]).pack(side="left", padx=(0, 6))
         self.spk_box = ttk.Combobox(self.spk_frame, style="Subtle.TCombobox", state="readonly",
-                                    font=FONTS["dropdown"], width=18)
+                                    font=FONTS["dropdown"], width=12)
         self.spk_box.pack(side="left")
         ttk.Button(row, text="Done", command=lambda: self.close_editor(save=True)).pack(side="right")
         ttk.Button(row, text="Next ▶", command=lambda: self._step(1)).pack(side="right", padx=(0, 6))
         ttk.Button(row, text="◀ Prev", command=lambda: self._step(-1)).pack(side="right", padx=(0, 6))
+
+        # Audio bar: the paragraph's waveform, with a playhead and a selectable stretch
+        self.wave = tk.Canvas(ed, height=int(64 * scale), bg=BG, highlightthickness=1,
+                              highlightbackground=BORDER, cursor="hand2")
+        self.wave.pack(fill="x", pady=(8, 0))
+        self.wave.bind("<Configure>", lambda e: self._draw_wave())
+        self.wave.bind("<ButtonPress-1>", self._wave_press)
+        self.wave.bind("<B1-Motion>", self._wave_drag_to)
+        self.wave.bind("<ButtonRelease-1>", self._wave_release)
+        times = tk.Frame(ed, bg=SURFACE)
+        times.pack(fill="x")
+        self.wave_start_lbl = tk.Label(times, text="", font=FONTS["mono"], fg=TEXT2, bg=SURFACE)
+        self.wave_start_lbl.pack(side="left")
+        self.wave_end_lbl = tk.Label(times, text="", font=FONTS["mono"], fg=TEXT2, bg=SURFACE)
+        self.wave_end_lbl.pack(side="right")
+
         self.edit_box = tk.Text(ed, height=4, wrap="word", font=FONTS["text"], bg=BG, fg=TEXT,
                                 relief="flat", highlightthickness=1, highlightbackground=BORDER,
                                 highlightcolor=ACCENT, padx=8, pady=6, undo=True,
                                 insertbackground=TEXT)
-        self.edit_box.pack(fill="x", pady=(8, 4))
-        tk.Label(ed, text="Ctrl+Space plays  ·  Ctrl+Enter saves  ·  Esc discards changes. "
-                          "Moving to another paragraph saves automatically.",
-                 font=FONTS["small"], fg=MUTED, bg=SURFACE, anchor="w").pack(fill="x")
-        self.edit_box.bind("<Control-Return>", lambda e: self._key(self._commit_open_edit))
-        self.edit_box.bind("<Escape>", lambda e: self._key(lambda: self.close_editor(save=False)))
-        self.edit_box.bind("<Control-space>", lambda e: self._key(self.toggle_play))
+        self.edit_box.pack(fill="x", pady=(4, 4))
+        self.edit_box.tag_configure("linked", background=HOVER)
+        hint = tk.Label(ed, text="Ctrl+Space plays or pauses (just the selected words, if any)  ·  "
+                                 "Alt+← back 3 s  ·  Ctrl+L loop  ·  Ctrl+↓ / Ctrl+↑ slower / faster  ·  "
+                                 "Ctrl+Enter saves  ·  Esc discards changes",
+                        font=FONTS["small"], fg=MUTED, bg=SURFACE, anchor="w", justify="left")
+        hint.pack(fill="x")
+        hint.bind("<Configure>", lambda e: hint.configure(wraplength=max(100, e.width)))
+        box = self.edit_box
+        box.bind("<Control-Return>", lambda e: self._key(self._commit_open_edit))
+        box.bind("<Escape>", lambda e: self._key(lambda: self.close_editor(save=False)))
+        box.bind("<Control-space>", lambda e: self._key(self.toggle_play))
+        box.bind("<Alt-Left>", lambda e: self._key(self.skip_back))
+        box.bind("<Control-l>", lambda e: self._key(self.toggle_loop))
+        box.bind("<Control-L>", lambda e: self._key(self.toggle_loop))
+        box.bind("<Control-Down>", lambda e: self._key(lambda: self._change_speed(-1)))
+        box.bind("<Control-Up>", lambda e: self._key(lambda: self._change_speed(1)))
+        box.bind("<<Selection>>", self._on_text_selection)
+        box.bind("<KeyRelease>", lambda e: self._refresh_linked_words(), add="+")
         return ed
 
     @staticmethod
@@ -868,16 +984,17 @@ class App:
         if ranges:
             self.text.tag_add("selected", ranges[0], ranges[-1])
             self.text.see(ranges[0])
-        self.range_lbl.configure(text=f"{fmt_time(par['start'])} – {fmt_time(par['end'])}")
         self.edit_box.delete("1.0", "end")
         self.edit_box.insert("1.0", par["text"])
         self.edit_box.edit_reset()
         self._fill_speakers(par["speaker"] if par["speaker"] is not None
                             else self.pieces[par["i0"]].get("speaker"))
-        self.play_btn.configure(state="normal" if self.audio is not None else "disabled")
+        self._load_audio(par)
         if not self.editor.winfo_ismapped():
             self.editor.pack(side="bottom", fill="x", padx=14, pady=(4, 0), before=self.body)
         self.edit_box.focus_set()
+        if self._play_job is None:
+            self._play_job = self.root.after(50, self._tick_playback)
 
     def _fill_speakers(self, current):
         ids = sorted({p["speaker"] for p in self.pieces if p.get("speaker") is not None})
@@ -911,12 +1028,8 @@ class App:
         if not text_changed and not speaker_changed:
             return None
         if text_changed:
-            # Corrected words are spread evenly over the paragraph's original time span.
-            tokens = new_text.split()
-            start, end = old[0]["start"], old[-1]["end"]
-            step = (end - start) / max(1, len(tokens))
-            new = [{"start": start + j * step, "end": start + (j + 1) * step,
-                    "text": " " + tok, "speaker": old_spk} for j, tok in enumerate(tokens)]
+            # Unchanged words keep their times; corrected ones fill the gaps around them.
+            new = timing.retime(old, new_text)
         else:
             new = [dict(p) for p in old]
         if speaker_changed:
@@ -968,46 +1081,246 @@ class App:
     def close_editor(self, save=True):
         if save:
             self._apply_edit()
-        self._stop_playback()
+        self.player.close()
+        if self._play_job is not None:
+            self.root.after_cancel(self._play_job)
+            self._play_job = None
         self.sel = None
         self.text.tag_remove("selected", "1.0", "end")
         self.editor.pack_forget()
 
+    # ---------------------------------------------------- audio review --
+    @staticmethod
+    def _speed_label(speed):
+        return f"{speed:g}×"
+
+    @staticmethod
+    def _tenths(seconds):
+        return fmt_time(seconds, with_ms=True)[:-2]   # HH:MM:SS.s
+
+    def _load_audio(self, par):
+        """Give the player and the audio bar the open paragraph, with 0.5 s either side."""
+        t0 = max(0.0, par["start"] - 0.5)
+        t1 = par["end"] + 0.5
+        if self.mode == "file" and self.duration:
+            t1 = min(t1, max(self.duration, par["end"]))
+        audio = self.audio.slice(t0, t1) if self.audio is not None else np.zeros(0, np.float32)
+        self.player.load(audio, t0)
+        self._wave_span = (t0, t1)
+        self._region, self._region_src = None, None
+        self.edit_box.tag_remove("linked", "1.0", "end")
+        state = "normal" if len(audio) else "disabled"
+        for w in (self.play_btn, self.back_btn, self.loop_btn):
+            w.configure(state=state)
+        self.speed_box.configure(state="readonly" if len(audio) else "disabled")
+        self.wave_start_lbl.configure(text=self._tenths(t0))
+        self.wave_end_lbl.configure(text=self._tenths(t1))
+        self.time_lbl.configure(text=self._tenths(t0))
+        self._draw_wave()
+
     def toggle_play(self):
-        if self._playing:
+        if self.player.is_playing:
             self._stop_playback()
             return
-        if self.sel is None or self.audio is None:
+        if self.sel is None or not len(self.player.source):
             return
-        par = self._pars[self.sel]
-        clip = self.audio.slice(par["start"] - 0.25, par["end"] + 0.35)
-        if not len(clip):
-            return
+        a, b = self._region or self._wave_span
+        pos = self.player.position
+        # Resume from the playhead if it's inside what will play; otherwise start over.
+        self._play(pos if a <= pos < b - 0.05 else a, b)
+
+    def _play(self, start, end):
+        loop_from = (self._region or self._wave_span)[0] if self._loop else None
         try:
-            import sounddevice as sd
-            sd.play(clip, transcribe.SAMPLE_RATE)
+            self.player.play(start, end, loop_from)
         except Exception as exc:
+            self.player.close()
             messagebox.showerror("diemut", "diemut couldn't play the audio. Check that speakers "
                                            f"or headphones are connected.\n\nDetails: {exc}")
             return
-        self._playing = True
-        self.play_btn.configure(text="■ Stop")
-        duration_ms = int(len(clip) / transcribe.SAMPLE_RATE * 1000) + 150
-        self._play_job = self.root.after(duration_ms, self._stop_playback)
+        self._show_playing()
 
     def _stop_playback(self):
-        if self._play_job is not None:
-            self.root.after_cancel(self._play_job)
-            self._play_job = None
-        if self._playing:
-            try:
-                import sounddevice as sd
-                sd.stop()
-            except Exception:
-                pass
-        self._playing = False
-        if hasattr(self, "play_btn"):
-            self.play_btn.configure(text="▶ Play")
+        """Pause, keeping the playhead where it is."""
+        self.player.pause()
+        self._show_playing()
+
+    def _show_playing(self):
+        playing = self.player.is_playing
+        self.play_btn.configure(text=PAUSE_LABEL if playing else PLAY_LABEL)
+
+    def skip_back(self):
+        if self.sel is None or not len(self.player.source):
+            return
+        t = max(self._wave_span[0], self.player.position - 3.0)
+        if self.player.is_playing:
+            self.player.seek(t)
+        else:
+            a, b = self._region or self._wave_span
+            self._play(t, b if t < b else self._wave_span[1])
+
+    def toggle_loop(self):
+        if self.sel is None or not len(self.player.source):
+            return
+        self._loop = not self._loop
+        self.loop_btn.state(["selected"] if self._loop else ["!selected"])
+        if self.player.is_playing:
+            self.player.set_loop((self._region or self._wave_span)[0] if self._loop else None)
+
+    def _on_speed(self, _event=None):
+        label = self.speed_box.get()
+        speed = next(s for s in playback.SPEEDS if self._speed_label(s) == label)
+        self.player.set_speed(speed)
+        self.speed_box.selection_clear()
+        self.edit_box.focus_set()
+
+    def _change_speed(self, direction):
+        if self.sel is None or not len(self.player.source):
+            return
+        speeds = playback.SPEEDS
+        i = max(0, min(len(speeds) - 1, speeds.index(self.player.speed) + direction))
+        self.speed_box.set(self._speed_label(speeds[i]))
+        self.player.set_speed(speeds[i])
+
+    def _tick_playback(self):
+        """Move the playhead and time while the panel is open (about every 50 ms)."""
+        if self.sel is not None and self.editor.winfo_ismapped():
+            t = self.player.position
+            self.time_lbl.configure(text=self._tenths(t))
+            self._draw_head(t)
+            if (self.play_btn.cget("text") == PAUSE_LABEL) != self.player.is_playing:
+                self._show_playing()
+        self._play_job = self.root.after(50, self._tick_playback)
+
+    # -- the audio bar --
+    def _wave_x(self, t):
+        b = int(self.wave.cget("highlightthickness"))
+        t0, t1 = self._wave_span
+        frac = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+        return b + max(0.0, min(1.0, frac)) * (self.wave.winfo_width() - 2 * b)
+
+    def _wave_time(self, x):
+        b = int(self.wave.cget("highlightthickness"))
+        t0, t1 = self._wave_span
+        frac = (x - b) / max(1, self.wave.winfo_width() - 2 * b)
+        return t0 + max(0.0, min(1.0, frac)) * (t1 - t0)
+
+    def _draw_wave(self):
+        c = self.wave
+        c.delete("all")
+        w, h = c.winfo_width(), c.winfo_height()
+        b = int(c.cget("highlightthickness"))
+        if w < 4 or self.sel is None:
+            return
+        c.create_rectangle(0, 0, 0, 0, fill=HOVER, outline="", state="hidden", tags="region")
+        x = self.player.source
+        mid = h / 2
+        if len(x):
+            cols = max(1, min(w - 2 * b, len(x)))
+            idx = np.linspace(0, len(x), cols, endpoint=False).astype(int)
+            hi, lo = np.maximum.reduceat(x, idx), np.minimum.reduceat(x, idx)
+            amp = (mid - b - 2) / max(float(np.abs(x).max()), 0.05)
+            xs = b + np.arange(cols) * (w - 2 * b) / cols
+            top = mid - np.maximum(hi * amp, 0.5)
+            bottom = mid - np.minimum(lo * amp, -0.5)
+            points = np.concatenate((np.column_stack((xs, top)),
+                                     np.column_stack((xs[::-1], bottom[::-1])))).ravel()
+            c.create_polygon(*points.tolist(), fill=MUTED, outline=MUTED)
+        c.create_line(0, 0, 0, 0, fill=DANGER, width=max(2, int(2 * self._scale)), tags="head")
+        self._draw_region()
+        self._draw_head(self.player.position)
+
+    def _draw_head(self, t):
+        x = self._wave_x(t)
+        self.wave.coords("head", x, 0, x, self.wave.winfo_height())
+
+    def _draw_region(self):
+        if self._region is None:
+            self.wave.itemconfigure("region", state="hidden")
+            return
+        a, b = self._region
+        self.wave.coords("region", self._wave_x(a), 0, self._wave_x(b), self.wave.winfo_height())
+        self.wave.itemconfigure("region", state="normal")
+
+    def _set_region(self, region, source):
+        self._region, self._region_src = region, (source if region else None)
+        self._draw_region()
+        if self.player.is_playing and self._loop:
+            self.player.set_loop((region or self._wave_span)[0])
+
+    def _wave_press(self, event):
+        if self.sel is None or not len(self.player.source):
+            return
+        self._drag = (event.x, self._wave_time(event.x), False)
+
+    def _wave_drag_to(self, event):
+        if self._drag is None:
+            return
+        x0, t0, moved = self._drag
+        if not moved and abs(event.x - x0) < 4 * self._scale:
+            return
+        self._drag = (x0, t0, True)
+        if not moved:
+            self.edit_box.tag_remove("sel", "1.0", "end")
+        t = self._wave_time(event.x)
+        self._set_region((min(t0, t), max(t0, t)), "bar")
+        self._refresh_linked_words()
+
+    def _wave_release(self, event):
+        if self._drag is None:
+            return
+        _, t0, moved = self._drag
+        self._drag = None
+        self.edit_box.focus_set()
+        if moved and self._region and self._region[1] - self._region[0] > 0.05:
+            self._play(*self._region)
+            return
+        # A click: clear any selection and play from there.
+        self.edit_box.tag_remove("sel", "1.0", "end")
+        self.edit_box.tag_remove("linked", "1.0", "end")
+        self._set_region(None, None)
+        self.player.seek(t0)
+        self._play(t0, self._wave_span[1])
+
+    # -- linking the edit box and the audio bar --
+    def _word_spans(self):
+        par = self._pars[self.sel]
+        return timing.timed_spans(self.pieces[par["i0"]:par["i1"]],
+                                  self.edit_box.get("1.0", "end-1c"))
+
+    def _on_text_selection(self, _event=None):
+        if self.sel is None:
+            return
+        box = self.edit_box
+        try:
+            a = len(box.get("1.0", box.index("sel.first")))
+            b = len(box.get("1.0", box.index("sel.last")))
+        except tk.TclError:
+            if self._region_src == "text":
+                self._set_region(None, None)
+            return
+        words = [w for w in self._word_spans() if w[1] > a and w[0] < b]
+        box.tag_remove("linked", "1.0", "end")
+        if not words:
+            self._set_region(None, None)
+            return
+        t0, t1 = self._wave_span
+        start = max(t0, min(w[2] for w in words) - 0.5)
+        end = min(t1, max(w[3] for w in words) + 0.5)
+        self._set_region((start, end), "text")
+
+    def _refresh_linked_words(self):
+        """Highlight the words under the stretch selected on the audio bar."""
+        if self.sel is None:
+            return
+        box = self.edit_box
+        box.tag_remove("linked", "1.0", "end")
+        if self._region_src != "bar":
+            return
+        a, b = self._region
+        for c0, c1, s, e in self._word_spans():
+            if s < b and e > a:
+                box.tag_add("linked", f"1.0 + {c0} chars", f"1.0 + {c1} chars")
 
     # ----------------------------------------------------------- export --
     def export(self, kind):

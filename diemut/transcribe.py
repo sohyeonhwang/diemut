@@ -324,7 +324,8 @@ def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
         try:
             segments, info = state["model"].transcribe(
                 audio, language=state["language"], beam_size=1, vad_filter=True,
-                condition_on_previous_text=False, initial_prompt=state["prompt"] or None)
+                condition_on_previous_text=False, initial_prompt=state["prompt"] or None,
+                word_timestamps=True)
             segments = list(segments)
         except Exception as exc:
             if stt.device != "cuda" or not _is_gpu_error(exc):
@@ -334,7 +335,8 @@ def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
             state["model"] = stt.load(model_name, lambda m: emit("status", m))
             segments, info = state["model"].transcribe(
                 audio, language=state["language"], beam_size=1, vad_filter=True,
-                condition_on_previous_text=False, initial_prompt=state["prompt"] or None)
+                condition_on_previous_text=False, initial_prompt=state["prompt"] or None,
+                word_timestamps=True)
             segments = list(segments)
             emit("status", "Listening… speak into your microphone.")
     finally:
@@ -342,10 +344,14 @@ def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
 
     texts = []
     for seg in segments:
-        if seg.text.strip():
-            texts.append(seg.text.strip())
-            emit("piece", {"start": offset + seg.start, "end": offset + seg.end,
-                           "text": seg.text, "speaker": None})
+        if not seg.text.strip():
+            continue
+        texts.append(seg.text.strip())
+        items = seg.words or [type("W", (), {"start": seg.start, "end": seg.end, "word": seg.text})]
+        for w in items:
+            if w.word.strip():
+                emit("piece", {"start": offset + float(w.start), "end": offset + float(w.end),
+                               "text": w.word, "speaker": None})
     if texts:
         # Auto-detect locks onto the first language heard; Multiple languages never locks.
         if language == AUTO and state["language"] is None:

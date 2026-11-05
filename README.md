@@ -4,6 +4,8 @@ diemut turns speech into text on your own computer. It can transcribe your micro
 
 Everything runs locally. Your audio never leaves your computer; the only internet use is downloading the models the first time you need them.
 
+**Disclaimer:** This was vibe-coded with Claude!
+
 | Start screen | Transcribing a file | Live from microphone |
 |---|---|---|
 | ![Start screen](docs/start.png) | ![A finished file transcript with speaker labels](docs/file.png) | ![Live transcription while recording](docs/live.png) |
@@ -48,7 +50,7 @@ Put diemut in a folder that **isn't synced by OneDrive**. Documents and Desktop 
 ```powershell
 mkdir $HOME\code
 cd $HOME\code
-git clone https://github.com/YOUR-LAB/diemut.git
+git clone https://github.com/sohyeonhwang/diemut.git
 cd diemut
 ```
 
@@ -121,7 +123,7 @@ To run it again later: `cd` into the folder, run `source .venv/bin/activate`, th
 
 ```bash
 sudo apt install python3-venv python3-tk libportaudio2
-git clone https://github.com/YOUR-LAB/diemut.git
+git clone https://github.com/sohyeonhwang/diemut.git
 cd diemut
 python3 -m venv .venv
 source .venv/bin/activate
@@ -157,13 +159,29 @@ On Windows, `~` means `C:\Users\<your name>`. After these downloads, diemut work
 2. Click a speaker's name to rename it, for example from "Speaker 2" to "Maya".
 3. **New file…** starts another file without going back to the start screen.
 
-**Listening and correcting.** Once a transcription has finished (or you've pressed Stop in live mode), click any paragraph. It's highlighted, and a panel opens below the transcript:
-- **▶ Play** plays that paragraph's audio. Ctrl+Space does the same while you're typing.
+**Listening and correcting.** Once a transcription has finished (or you've pressed Stop in live mode), click any paragraph. It's highlighted, and a panel opens below the transcript with the paragraph's audio bar (its waveform, plus half a second either side) and its text:
+- **▶ Play / ‖ Pause** plays the paragraph from the red playhead. Pausing keeps your place, and Play carries on from there.
+- **Select some words** in the text box and press **Ctrl+Space** to hear just those words, from half a second before to half a second after. The matching stretch is tinted on the audio bar.
+- **Click the audio bar** to play from that point. **Drag across it** to play a stretch; the words in that stretch are highlighted in the text.
+- **⟲ 3 s** jumps back three seconds and keeps playing.
+- **Loop** repeats the selected words or stretch (or the whole paragraph, if nothing is selected) until you pause.
+- **Speed** plays at 0.5×, 0.75×, 1×, 1.25× or 1.5×. Voices keep their normal pitch at every speed.
 - Type your correction in the text box. **Ctrl+Enter** saves it, and **Esc** discards your changes.
 - **Speaker** (files only) moves the paragraph to another speaker, or to a *New speaker* if two people were merged into one.
 - **◀ Prev / Next ▶** step through the transcript paragraph by paragraph and save as you go. **Done** saves and closes the panel.
 
-Corrections carry over to every export format. Corrected words keep their paragraph's start and end times, spread evenly in between, so subtitle timing in a corrected paragraph is approximate. Deleting all the text in a paragraph removes it.
+Keyboard shortcuts, which all work while you're typing in the text box:
+
+| Keys | Action |
+|---|---|
+| Ctrl+Space | Play or pause (just the selected words, if any are selected) |
+| Alt+← | Back 3 seconds |
+| Ctrl+L | Loop on or off |
+| Ctrl+↓ / Ctrl+↑ | Slower / faster |
+| Ctrl+Enter | Save the correction |
+| Esc | Discard your changes |
+
+Corrections carry over to every export format. Words you didn't change keep their exact timings, and new or corrected words are fitted into the time between the words around them, so subtitle timing stays accurate. Deleting all the text in a paragraph removes it.
 
 **Exporting.** Use the **.txt**, **.vtt** or **.docx** buttons. The **Timestamps** checkbox controls whether `.txt` and `.docx` include times; `.vtt` subtitles always have them.
 
@@ -220,11 +238,74 @@ diemut/
 ├── ui.py           start screen and transcript screen
 ├── transcribe.py   Whisper (files and live), model choices, live-mode timing
 ├── speakers.py     speaker labels and paragraph grouping
+├── timing.py       keeps word timings when you correct a paragraph
+├── playback.py     audio playback in the correction panel (pause, loop, slower speeds)
 ├── export.py       .txt, .vtt and .docx
 └── languages.py    the language list
 ```
 
 Settings you might want to adjust are constants near the top of each file. For example, `PARAGRAPH_PAUSE` in `speakers.py` sets how long a pause must be before a new paragraph starts.
+
+## Improvements + Contributing
+
+diemut is deliberately small for now. These are directions we'd like to take it. Contributions and suggestions are welcome; open an issue to discuss before starting on something big, but feel free to take on a chunk below. Everyone taking part is expected to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+**Important:** diemut exists so recordings and transcripts never have to leave a computer you control. That matters for research data, interviews and anything confidential. Cloud speech-to-text APIs (OpenAI, Google, AWS, AssemblyAI and others) send your audio to someone else's servers, so diemut won't include them by default. If one is ever added, it should be strictly opt-in, clearly labelled as *not local* everywhere it appears, and never the default. Local options should always come first!
+
+### Packaging as a clickable app
+
+A downloadable installer, so people can use diemut without installing Python or typing commands:
+- Build a standalone app with PyInstaller (one-folder mode, which starts faster than one-file mode), and wrap it in an installer: Inno Setup for Windows, and a `.dmg` for macOS.
+- Use GitHub Actions to build the Windows and Mac versions automatically and attach them to each release.
+- Models would still download on first use, to keep the installer small.
+- Without code signing, Windows and macOS show a security warning on first launch. Signing costs money every year, so at first a note in the README explaining how to get past the warning may be enough.
+
+### Learning from corrections
+
+Every correction made in diemut is evidence of what the model gets wrong, especially names, jargon and accents particular to a group. Possible steps, from easiest to hardest:
+1. **Custom vocabulary.** Keep a list of words people often correct (names, technical terms) and pass it to Whisper as hints. faster-whisper supports this through `hotwords` and `initial_prompt`. This is a quick win and needs no training.
+2. **Saving correction pairs.** Optionally save each corrected paragraph's audio clip together with the corrected text, building a local dataset. This must be opt-in. Audio of people speaking is sensitive: it should be stored only locally, with clear deletion controls, and used only where the people recorded have consented (for research, in line with your ethics or IRB approval).
+3. **Fine-tuning.** Use that dataset to fine-tune a Whisper model, for example with Hugging Face Transformers and LoRA, then convert it with CTranslate2's converter so diemut can load it. This needs a GPU and a fair amount of corrected audio. The fine-tuned model should be compared against the original on held-out recordings, to make sure it actually improved.
+
+### Shared setup on a lab server
+
+For a lab that shares one powerful machine:
+- **Shared model storage (simplest).** Point every installation at one shared folder (`HF_HOME` for Whisper, `DIEMUT_HOME` for the speaker models) so large models are downloaded once.
+- **diemut as a lab web app.** Run diemut on the lab server and use it through a web browser. Models load once on the server's GPU; people upload files, or record through the browser's microphone, and transcription jobs are queued. Audio and transcripts stay on lab-controlled hardware. This needs user accounts, HTTPS, per-person storage and a policy for how long recordings are kept.
+
+### Settings, and other models
+
+A settings window for choosing and adding models without editing code:
+- Pick the speech-to-text model, the speaker-labelling engine, the device (CPU/GPU) and the CPU thread count.
+- Load custom or fine-tuned Whisper models from a folder or a Hugging Face model name.
+- Offer pyannote as a more accurate speaker-labelling option, for people willing to install PyTorch and use a free Hugging Face token. It still runs locally.
+- Engines as plug-ins: each model is a small file that declares what it does and whether it is local, so the interface, including the "Fully local" label, updates automatically.
+- Per-person saved settings, plus optional lab-wide defaults such as the shared model folder.
+
+### Other improvements
+
+**Working with transcripts**
+- Save and reopen sessions (transcript, corrections and audio), plus autosave, so work isn't lost when diemut closes.
+- Highlight words Whisper was unsure about (it reports a confidence for each word), so reviewing goes straight to the likely mistakes.
+- Find, and find-and-replace across the whole transcript (for example, fixing a misspelled name everywhere at once).
+- Playback that follows along in the text, with a speed control for careful listening.
+
+**Research workflows**
+- Batch-transcribe a whole folder of recordings.
+- More export formats: `.srt` subtitles, plus `.csv` or `.json` for qualitative analysis tools such as NVivo, ATLAS.ti and MAXQDA.
+- Help with anonymisation: flag or replace names and other identifying details before transcripts are shared.
+- Tell diemut how many speakers there are when you know, which improves speaker labelling.
+
+**Audio input**
+- Choose which microphone to use.
+- Transcribe the computer's own audio (for example, the other side of a video call), not just the microphone.
+
+**Translation**
+- Optional translation to English, with every translated passage clearly marked in the window and in exports, so original speech and translation are never confused.
+
+**Quality and accessibility**
+- Automated tests, and GitHub Actions to check that diemut installs on Windows, macOS and Linux.
+- Dark mode, adjustable text size and full keyboard navigation.
 
 ## License
 
