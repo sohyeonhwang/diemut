@@ -21,6 +21,7 @@ TEXT2 = "#5f5e5a"
 MUTED = "#8f8e88"
 ACCENT = "#51b5d1"
 DANGER = "#c90065"
+PLAYING = "#ffff99"   # behind the word being played: a faint #FFFF00
 
 FONTS = {}
 
@@ -72,23 +73,12 @@ def setup_style(root):
               bordercolor=[("disabled", BORDER), ("selected", ACCENT)],
               lightcolor=[("selected", BORDER), ("active", HOVER)],
               darkcolor=[("selected", BORDER), ("active", HOVER)])
-    def filled(name, color, on=None):
-        """A button filled with color, darker on hover and press. With on, it turns that
-        colour, with white text, while it's selected (a mode that's switched on)."""
-        style.configure(name, background=color, foreground=TEXT, focuscolor=color,
-                        bordercolor=shade(color, 0.75), lightcolor=color, darkcolor=color)
-        fill, fg, border = [("disabled", BG)], [("disabled", MUTED)], [("disabled", BORDER)]
-        if on:
-            fill += [("selected", "pressed", shade(on, 0.8)),
-                     ("selected", "active", shade(on, 0.9)), ("selected", on)]
-            fg.append(("selected", BG))
-            border.append(("selected", shade(on, 0.7)))
-        fill += [("pressed", shade(color, 0.8)), ("active", shade(color, 0.9))]
-        style.map(name, background=fill, lightcolor=fill, darkcolor=fill, foreground=fg,
-                  bordercolor=border)
-
-    filled("Accent.TButton", ACCENT)                # actions: Start, Export…, Merge N…
-    filled("Mode.TButton", ACCENT, on=DANGER)       # Merge and Split
+    # Accent buttons, for actions (Start, Export…, Merge…): accent fill, darker on hover
+    fill = [("disabled", BG), ("pressed", shade(ACCENT, 0.8)), ("active", shade(ACCENT, 0.9))]
+    style.configure("Accent.TButton", background=ACCENT, foreground=TEXT, focuscolor=ACCENT,
+                    bordercolor=shade(ACCENT, 0.75), lightcolor=ACCENT, darkcolor=ACCENT)
+    style.map("Accent.TButton", background=fill, lightcolor=fill, darkcolor=fill,
+              foreground=[("disabled", MUTED)], bordercolor=[("disabled", BORDER)])
     style.configure("TRadiobutton", background=BG, foreground=TEXT, focuscolor=BG,
                     indicatorbackground=BG, indicatorforeground=ACCENT)
     style.map("TRadiobutton", background=[("active", BG)],
@@ -123,8 +113,8 @@ def setup_style(root):
 def file_cursor(root, name, fallback):
     """A pointer drawn for diemut (assets/<name>.cur on Windows, .xbm bitmaps on X11).
 
-    Used for Split mode (a sword) and Merge mode (a needle and thread); other systems,
-    or a missing file, get fallback.
+    Used for Merge mode (a needle and thread); other systems, or a missing file, get
+    fallback.
     """
     try:
         from importlib.resources import files

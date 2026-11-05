@@ -20,6 +20,28 @@ def _scale(widget):
     return max(1.0, widget.winfo_fpixels("1i") / 96.0)
 
 
+def tip_window(widget, title, text, x, y):
+    """A small pop-up with a title and a line or two of text, with its top-left near x, y
+    (screen coordinates). x is kept on screen. Destroy it to hide it."""
+    tip = tk.Toplevel(widget)
+    tip.wm_overrideredirect(True)
+    try:
+        tip.attributes("-topmost", True)
+    except tk.TclError:
+        pass
+    frame = tk.Frame(tip, bg=BG, highlightthickness=1,
+                     highlightbackground=BORDER_STRONG, padx=10, pady=7)
+    tk.Label(frame, text=title, font=FONTS["small_bold"], fg=TEXT2, bg=BG,
+             anchor="w").pack(fill="x")
+    tk.Label(frame, text=text, font=FONTS["small"], fg=TEXT, bg=BG, wraplength=260,
+             justify="left", anchor="w").pack(fill="x")
+    frame.pack()
+    tip.update_idletasks()
+    x = max(0, min(x, tip.winfo_screenwidth() - tip.winfo_reqwidth()))
+    tip.geometry(f"+{x}+{y}")
+    return tip
+
+
 class Tooltip:
     """A small pop-up that appears while the mouse is over a widget."""
 
@@ -32,24 +54,11 @@ class Tooltip:
         if self.tip is not None:
             return
         text = self.text() if callable(self.text) else self.text
-        tip = tk.Toplevel(self.widget)
-        tip.wm_overrideredirect(True)
-        try:
-            tip.attributes("-topmost", True)
-        except tk.TclError:
-            pass
-        frame = tk.Frame(tip, bg=BG, highlightthickness=1,
-                         highlightbackground=BORDER_STRONG, padx=10, pady=7)
-        tk.Label(frame, text=self.title, font=FONTS["small_bold"], fg=TEXT2, bg=BG,
-                 anchor="w").pack(fill="x")
-        tk.Label(frame, text=text, font=FONTS["small"], fg=TEXT, bg=BG, wraplength=260,
-                 justify="left", anchor="w").pack(fill="x")
-        frame.pack()
-        tip.update_idletasks()
-        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2 - tip.winfo_reqwidth() // 2
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        w = self.widget
+        y = w.winfo_rooty() + w.winfo_height() + 6      # centred below the widget
+        self.tip = tip = tip_window(w, self.title, text, 0, y)
+        x = w.winfo_rootx() + w.winfo_width() // 2 - tip.winfo_reqwidth() // 2
         tip.geometry(f"+{max(0, x)}+{y}")
-        self.tip = tip
 
     def hide(self, _event=None):
         if self.tip is not None:

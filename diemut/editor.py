@@ -4,6 +4,7 @@ EditorMixin is part of App (see ui.py) and uses its state: pieces, _pars, sel (t
 paragraph), text (the transcript), audio, player and status_lbl, among others.
 """
 
+import sys
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -12,8 +13,14 @@ import numpy as np
 from . import playback, timing
 from .dialogs import Tooltip
 from .export import fmt_time
-from .theme import ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FONTS, MUTED, SURFACE, TEXT, TEXT2
+from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FONTS, MUTED, PLAYING, SURFACE,
+                    TEXT, TEXT2)
 
+# Ctrl+Alt+click (Ctrl+Option+click on macOS) moves the playhead to the exact spot clicked,
+# in the correction box or the transcript. Alt+click alone is taken by some Linux desktops.
+_MAC = sys.platform == "darwin"
+SEEK_BINDING = "<Control-Option-Button-1>" if _MAC else "<Control-Alt-Button-1>"
+SEEK_CLICK = "Ctrl+Option+click" if _MAC else "Ctrl+Alt+click"
 PLAY_LABEL = "▶ Play"
 PAUSE_LABEL = "‖ Pause"
 
@@ -84,9 +91,12 @@ class EditorMixin:
                                 insertbackground=TEXT, exportselection=False)
         self.edit_box.pack(fill="x", pady=(4, 4))
         self.edit_box.tag_configure("linked", background=TEXT, foreground=BG)
+        # Made after "sel" and "linked", so it shows above them; dark text reads on the yellow
+        self.edit_box.tag_configure("playing", background=PLAYING, foreground=TEXT)
         shortcuts = ["Ctrl+Space plays or pauses (just the selected words, if any)",
                      "Alt+← back 3 s", "Ctrl+L loop", "Ctrl+↓ / Ctrl+↑ slower / faster",
-                     "Double-click a word to move the playhead there",
+                     "Double-click a word to select it and move the playhead there",
+                     f"{SEEK_CLICK} to move the playhead to that exact spot",
                      "Enter splits the paragraph", "Ctrl+Enter saves", "Esc discards changes"]
         # Non-breaking spaces inside each shortcut, so lines only wrap between them
         hint = tk.Label(ed, text="  ·  ".join(t.replace(" ", "\u00a0") for t in shortcuts),
@@ -106,6 +116,7 @@ class EditorMixin:
         box.bind("<Control-Up>", lambda e: self._key(lambda: self._change_speed(1)))
         box.bind("<<Selection>>", self._on_text_selection)
         box.bind("<Double-Button-1>", self._on_word_double_click)
+        box.bind(SEEK_BINDING, self._on_seek_click)
         box.bind("<KeyRelease>", lambda e: self._refresh_linked_words(), add="+")
         return ed
 
@@ -127,14 +138,14 @@ class EditorMixin:
                 self.close_editor(save=False)
                 return
         self._stop_playback()
-        if k != self.sel and self._mode == "split":
-            self._set_mode(None)
         self.sel = k
         par = self._pars[k]
         self._show_open_paragraph()
         self.edit_box.delete("1.0", "end")
         self.edit_box.insert("1.0", par["text"])
         self.edit_box.edit_reset()
+        self._spans_cache = None
+        self._playing_word = None
         self._fill_speakers(par["speaker"] if par["speaker"] is not None
                             else self.pieces[par["i0"]].get("speaker"))
         self._load_audio(par)
@@ -249,8 +260,6 @@ class EditorMixin:
             self.root.after_cancel(self._play_job)
             self._play_job = None
         self.sel = None
-        if self._mode == "split":
-            self._set_mode(None)
         self.text.tag_remove("selected", "1.0", "end")
         self.editor.pack_forget()
         self._update_par_tools()
@@ -354,6 +363,7 @@ class EditorMixin:
             t = self.player.position
             self.time_lbl.configure(text=self._tenths(t))
             self._draw_head(t)
+            self._show_playing_word(t)
             if self._shown_playing != self.player.is_playing:   # it reached the end
                 self._show_playing()
         self._play_job = self.root.after(50, self._tick_playback)
@@ -464,37 +474,80 @@ class EditorMixin:
 
     # -- linking the edit box and the audio bar --
     def _word_spans(self):
-        par = self._pars[self.sel]
-        return timing.timed_spans(self.pieces[par["i0"]:par["i1"]],
-                                  self.edit_box.get("1.0", "end-1c"))
+        """[(char start, char end, start, end)] for each word in the edit box. Kept until the
+        text changes: the playing-word highlight asks for it every 50 ms."""
+        text = self.edit_box.get("1.0", "end-1c")
+        if self._spans_cache is None or self._spans_cache[0] != (self.sel, text):
+            par = self._pars[self.sel]
+            spans = timing.timed_spans(self.pieces[par["i0"]:par["i1"]], text)
+            self._spans_cache = ((self.sel, text), spans)
+        return self._spans_cache[1]
+
+    def _show_playing_word(self, t):
+        """The faint yellow behind the word at the playhead."""
+        word = next(((c0, c1) for c0, c1, s, e in self._word_spans() if s <= t < e), None)
+        if word != self._playing_word:
+            self._playing_word = word
+            self.edit_box.tag_remove("playing", "1.0", "end")
+            if word:
+                self.edit_box.tag_add("playing", f"1.0 + {word[0]} chars", f"1.0 + {word[1]} chars")
 
     def _on_word_double_click(self, event):
         """Move the playhead to the start of the double-clicked word.
 
-        If audio is playing it carries on from there; otherwise it waits for Play.
+        Tk's own binding still selects the word. If audio is playing it carries on from the
+        word; otherwise it waits for Play (which then plays the selected word).
+        """
+        if self.sel is None or not len(self.player.source):
+            return
+        box = self.edit_box
+        offset = len(box.get("1.0", box.index(f"@{event.x},{event.y}")))
+        spans = self._word_spans()
+        word = (next((w for w in spans if w[0] <= offset < w[1]), None)
+                or next((w for w in spans if w[0] >= offset), None))
+        if word is not None:
+            self._seek_to(word[2])
+
+    def _on_seek_click(self, event):
+        """Move the playhead to exactly where the text was clicked, part-way into a word.
+
+        Between words it goes to the start of the next one. If audio is playing it carries
+        on from there; if not, Play starts there.
         """
         if self.sel is None or not len(self.player.source):
             return "break"
         box = self.edit_box
-        index = box.index(f"@{event.x},{event.y}")
-        offset = len(box.get("1.0", index))
+        offset = len(box.get("1.0", box.index(f"@{event.x},{event.y}")))
+        self._clear_play_region()
         spans = self._word_spans()
-        word = (next((w for w in spans if w[0] <= offset < w[1]), None)
-                or next((w for w in spans if w[0] >= offset), None))
-        box.mark_set("insert", index)
-        if word is None:
-            return "break"
-        box.mark_set("insert", f"1.0 + {word[0]} chars")
-        start = max(self._wave_span[0], word[2])
+        inside = next((w for w in spans if w[0] <= offset < w[1]), None)
+        if inside:
+            c0, c1, start, end = inside
+            self._seek_to(start + (end - start) * (offset - c0) / (c1 - c0))
+        elif spans:
+            after = next((w for w in spans if w[0] >= offset), None)
+            self._seek_to(after[2] if after else spans[-1][3])
+        return "break"   # it doesn't move the typing cursor
+
+    def _clear_play_region(self):
+        """Forget the selected words or stretch, so Play starts from the playhead.
+
+        Selected words are what Play plays, so a selection left behind by an earlier
+        double-click would pull playback back to it.
+        """
+        self.edit_box.tag_remove("sel", "1.0", "end")
+        self.edit_box.tag_remove("linked", "1.0", "end")
         self._set_region(None, None)
-        box.tag_remove("linked", "1.0", "end")
+
+    def _seek_to(self, t):
+        """Put the playhead at t seconds; if audio is playing, carry on from there."""
+        t = max(self._wave_span[0], min(t, self._wave_span[1]))
         if self.player.is_playing:
-            self._play(start, self._wave_span[1])
+            self._play(t, self._wave_span[1])
         else:
-            self.player.seek(start)
-            self._draw_head(start)
-            self.time_lbl.configure(text=self._tenths(start))
-        return "break"   # a double-click moves the playhead; it doesn't select the word
+            self.player.seek(t)
+            self._draw_head(t)
+            self.time_lbl.configure(text=self._tenths(t))
 
     def _on_text_selection(self, _event=None):
         if self.sel is None:

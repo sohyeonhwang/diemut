@@ -1,16 +1,15 @@
-"""Merging and splitting paragraphs, and what clicks in the transcript do.
+"""Merging paragraphs (merge mode), the right-click menu, what clicks in the transcript do,
+and where each word sits in a paragraph's text.
 
 ParagraphsMixin is part of App (see ui.py) and uses its state: pieces, _pars, sel, text,
-the Merge and Split buttons, and the correction panel's methods.
+the Merge button, and the correction panel's methods.
 """
 
 
 class ParagraphsMixin:
-    """Merge and Split, and clicks in the transcript, as part of App."""
+    """Merge mode, the right-click menu and clicks in the transcript, as part of App."""
 
     def _text_cursor(self):
-        if self._mode == "split":
-            return self._sword
         if self._mode == "merge":
             return self._needle
         return "hand2" if (self.pieces and not self.busy) else "arrow"
@@ -27,9 +26,6 @@ class ParagraphsMixin:
     def _on_text_press(self, event):
         if self.busy or not self.pieces:
             return None
-        if self._mode == "split":
-            self._split_at_click(event)
-            return "break"
         k = self._par_at(event)
         if self._mode == "merge":
             # [paragraph, dragged?, Shift held?]; there's no text selection while merging
@@ -37,6 +33,34 @@ class ParagraphsMixin:
             return "break"
         self._press = [k, False, False]
         return None   # Tk's own binding starts a text selection, for copying
+
+    def _on_text_seek_click(self, event):
+        """Ctrl+Alt+click: open the paragraph with the playhead at exactly the spot clicked.
+
+        If audio was playing, it carries on from there.
+        """
+        if self.busy or not self.pieces or self._mode == "merge" or self.audio is None:
+            return "break"
+        k = self._par_at(event)
+        if k is None:
+            return "break"
+        par = self._pars[k]
+        index = self.text.index(f"@{event.x},{event.y}")
+        ranges = self.text.tag_ranges(f"ptext:{k}")
+        if ranges and self.text.compare(index, ">=", ranges[0]):
+            t = self._time_at_offset(par, len(self.text.get(ranges[0], index)))
+        else:
+            t = par["start"]   # the timestamp: the paragraph's start
+        # Work out t first: opening another paragraph saves this one, which can renumber
+        was_playing = self.player.is_playing
+        if k != self.sel:
+            self.open_editor(k)
+        self._clear_play_region()
+        if was_playing and not self.player.is_playing:
+            self._play(t, self._wave_span[1])
+        else:
+            self._seek_to(t)
+        return "break"
 
     def _on_text_drag(self, event):
         if self._mode != "merge" or not self._press:
@@ -49,7 +73,7 @@ class ParagraphsMixin:
 
     def _on_text_release(self, event):
         press, self._press = self._press, None
-        if not press or press[0] is None or self._mode == "split":
+        if not press or press[0] is None:
             return
         k, dragged, shift = press
         if self._mode == "merge":
@@ -58,16 +82,14 @@ class ParagraphsMixin:
         elif not self.text.tag_ranges("sel") and self._par_at(event) == k:
             self.open_editor(k)   # a click, not a text selection (to copy)
 
-    # -- merge and split modes --
+    # -- merge mode --
     MODE_HINTS = {
         "merge": "Click or drag over the paragraphs to merge: next to each other, from the same "
-                 "speaker. Shift+click checks a run. Merge again or Esc stops.",
-        "split": "Click the word in the highlighted paragraph where the new paragraph should "
-                 "start. Split again or Esc stops.",
+                 "speaker. Shift+click checks a run. Cancel or Esc stops.",
     }
 
     def _set_mode(self, mode):
-        """Turn merge or split mode on ("merge" / "split"), or whichever is on off (None)."""
+        """Turn merge mode on ("merge") or off (None)."""
         if mode == self._mode:
             return
         self._mode = mode
@@ -88,17 +110,6 @@ class ParagraphsMixin:
         if i0 is not None:      # start from the paragraph that was open
             k = self._par_at_piece(i0)
             self._set_merge_range((k, k), k)
-
-    def toggle_split_mode(self):
-        if self._mode == "split":
-            self._set_mode(None)
-            return
-        if self.sel is None:
-            return
-        self._set_mode(None)
-        self._save_edit()
-        if self.sel is not None:
-            self._set_mode("split")
 
     def _mergeable(self, a, b):
         """True if paragraphs a to b are next to each other and all the same speaker."""
@@ -181,31 +192,24 @@ class ParagraphsMixin:
         t.configure(state="disabled")
 
     def _update_par_tools(self):
-        """Merge and Split: shown with a transcript, faded when they can't be used, red when on.
-
-        In merge mode, Merge N paragraphs floats at the top of the transcript.
-        """
+        """The centred row: Merge (faded with only one paragraph), or in merge mode,
+        Merge N paragraphs and Cancel."""
         if self.busy or not self.pieces:
             self.par_tools.place_forget()
-            self.merge_sel_btn.place_forget()
             return
         self.par_tools.place(relx=0.5, rely=0, anchor="n")   # centred, top-aligned like the rest
-        par = self._pars[self.sel] if self.sel is not None else None
-        for btn, mode, usable in (
-                (self.merge_mode_btn, "merge", len(self._pars) > 1),
-                (self.split_btn, "split", par is not None and par["i1"] - par["i0"] > 1)):
-            on = self._mode == mode
-            btn.state(["selected" if on else "!selected",
-                       "!disabled" if on or usable else "disabled"])
+        for w in self.par_tools.winfo_children():
+            w.pack_forget()
         if self._mode == "merge":
             a, b = self._merge_range or (0, -1)
             n = b - a + 1
             self.merge_sel_btn.configure(text=f"Merge {n} paragraphs" if n > 1 else "Merge",
                                          state="normal" if n > 1 else "disabled")
-            self.merge_sel_btn.place(relx=0.5, rely=0.0, y=10, anchor="n")
-            self.merge_sel_btn.lift()
+            self.merge_sel_btn.pack(side="left", padx=(0, 6))
+            self.merge_cancel_btn.pack(side="left")
         else:
-            self.merge_sel_btn.place_forget()
+            self.merge_mode_btn.configure(state="normal" if len(self._pars) > 1 else "disabled")
+            self.merge_mode_btn.pack(side="left")
 
     def merge_selected(self):
         if self._mode != "merge" or not self._merge_range:
@@ -217,25 +221,6 @@ class ParagraphsMixin:
         keep = self._pars[a]["i0"]
         self._set_mode(None)
         self._apply_marks(marks, keep, f"{b - a + 1} paragraphs merged.")
-
-    def _split_at_click(self, event):
-        k = self._par_at(event)
-        if k is None or k != self.sel:
-            self.status_lbl.configure(text="Click a word in the highlighted paragraph, or press "
-                                           "Esc to stop splitting.")
-            return
-        par = self._pars[k]
-        index = self.text.index(f"@{event.x},{event.y}")
-        ranges = self.text.tag_ranges(f"ptext:{k}")
-        if not ranges or self.text.compare(index, "<", ranges[0]):
-            return
-        i = self._piece_at_offset(par, len(self.text.get(ranges[0], index)))
-        if i <= par["i0"]:
-            self.status_lbl.configure(text="The paragraph already starts there. Click a later "
-                                           "word.")
-            return
-        self._set_mode(None)
-        self._apply_marks([(i, "start")], par["i0"], "Paragraph split.")
 
     def _apply_marks(self, marks, keep, status):
         """Split or merge paragraphs: set "par" marks on pieces, then open the paragraph
@@ -293,16 +278,40 @@ class ParagraphsMixin:
         return a["i1"] == b["i0"] and (self.pieces[a["i0"]].get("speaker")
                                        == self.pieces[b["i0"]].get("speaker"))
 
+    def _piece_spans(self, par):
+        """(piece index, char start, char end) of each piece in a paragraph's displayed text.
+
+        The transcript shows the pieces joined and with runs of whitespace made single spaces
+        (speakers.group_blocks), so this follows the same steps. A piece without a leading
+        space, like "'t" after "don", sits right against the one before it.
+        """
+        out, pos, space = [], 0, False
+        for i in range(par["i0"], par["i1"]):
+            start = None
+            for ch in self.pieces[i]["text"]:
+                if ch.isspace():
+                    space = pos > 0          # one space, and none at the very start
+                    continue
+                if space:
+                    pos, space = pos + 1, False
+                if start is None:
+                    start = pos
+                pos += 1
+            out.append((i, pos if start is None else start, pos))
+        return out
+
     def _piece_at_offset(self, par, offset):
         """The piece at a character offset in a paragraph's displayed text."""
-        spaced = " " in par["text"]
-        pos = 0
-        for i in range(par["i0"], par["i1"]):
-            text = self.pieces[i]["text"]
-            pos += len(" ".join(text.split()) if spaced else text.strip()) + (1 if spaced else 0)
-            if offset < pos:
-                return i
-        return par["i1"] - 1
+        return next((i for i, _, c1 in self._piece_spans(par) if offset <= c1), par["i1"] - 1)
+
+    def _time_at_offset(self, par, offset):
+        """The time at a character offset in a paragraph's displayed text: part-way into a
+        word by character, or the next word's start if the offset is in the space after one."""
+        for i, c0, c1 in self._piece_spans(par):
+            if offset < c1:
+                p = self.pieces[i]
+                return p["start"] + (p["end"] - p["start"]) * max(0, offset - c0) / max(1, c1 - c0)
+        return self.pieces[par["i1"] - 1]["end"]
 
     def _par_at_piece(self, i):
         """The paragraph holding piece i (or the next one, if i is past its end)."""

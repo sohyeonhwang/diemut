@@ -1,6 +1,6 @@
 """diemut's window: the start screen, the transcript screen and the live mini view.
 
-The correction panel is in editor.py and merging and splitting in paragraphs.py
+The correction panel is in editor.py and merging paragraphs in paragraphs.py
 (both mixed into App); dialogs.py has the small windows and theme.py the look.
 """
 
@@ -15,7 +15,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import export, playback, speakers, transcribe
 from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_speaker_count, count_label,
                       export_dialog, SpeakersWindow, Tooltip)
-from .editor import EditorMixin
+from .editor import SEEK_BINDING, EditorMixin
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
 from .paragraphs import ParagraphsMixin
@@ -57,7 +57,7 @@ class App(EditorMixin, ParagraphsMixin):
         self._play_job = None
         self._shown_playing = False  # what the Play / Pause button shows
         self._loop = False
-        self._mode = None           # None, "merge" or "split": changed only by _set_mode
+        self._mode = None           # None or "merge": changed only by _set_mode
         self._merge_range = None    # (first, last) paragraphs checked in merge mode
         self._merge_anchor = None   # the paragraph clicked last, where Shift+click counts from
         self._press = None          # [paragraph, dragged?, Shift?] while the mouse is down
@@ -66,6 +66,8 @@ class App(EditorMixin, ParagraphsMixin):
         self._drag = None
         self._wave_span = (0.0, 0.0)
         self._wave_cols = None     # the waveform's columns, as last drawn
+        self._spans_cache = None   # ((open paragraph, edit text), word positions and times)
+        self._playing_word = None  # (char start, char end) highlighted as it plays
         self._spk_map = {}
         self._clear_transcript()
 
@@ -359,27 +361,19 @@ class App(EditorMixin, ParagraphsMixin):
 
         self.export_btn = ttk.Button(controls, text="Export…", style="Accent.TButton", command=lambda: export_dialog(self))
         self.export_btn.pack(side="right")
-        # Merge and split, shown while paragraphs are selected in the transcript
-        # Centred in the row, whatever is on the left and right
+        # Merge, centred in the row whatever is on the left and right
         self.par_tools = tk.Frame(controls, bg=BG)
         self.par_tools.place(relx=0.5, rely=0, anchor="n")   # top-aligned, like the others
-        self.merge_mode_btn = ttk.Button(self.par_tools, text="Merge", style="Mode.TButton",
+        # Merge; in merge mode, Merge N paragraphs and Cancel take its place
+        self.merge_mode_btn = ttk.Button(self.par_tools, text="Merge", style="Accent.TButton",
                                          command=self.toggle_merge_mode)
         Tooltip(self.merge_mode_btn, "Merge",
-                lambda: "Check the paragraphs to merge, then click Merge N paragraphs. Merge "
-                        "again, or Esc, stops." if self._mode == "merge" else
-                        "Merges paragraphs that are next to each other and from the same "
-                        "speaker. Click it, then check the paragraphs.")
-        self.merge_mode_btn.pack(side="left", padx=(0, 6))
-        self.split_btn = ttk.Button(self.par_tools, text="Split", style="Mode.TButton",
-                                    command=self.toggle_split_mode)
-        Tooltip(self.split_btn, "Split",
-                lambda: "Click the word where the new paragraph should start. Split again, or "
-                        "Esc, stops." if self._mode == "split" else
-                        "Click a paragraph in the transcript, then Split to divide it."
-                        if self.sel is None else
-                        "Then click the word where the new paragraph should start.")
-        self.split_btn.pack(side="left")
+                "Merges paragraphs that are next to each other and from the same speaker. "
+                "Click it, then check the paragraphs.")
+        self.merge_sel_btn = ttk.Button(self.par_tools, text="Merge", style="Accent.TButton",
+                                        command=self.merge_selected)
+        self.merge_cancel_btn = ttk.Button(self.par_tools, text="Cancel", style="Accent.TButton",
+                                           command=lambda: self._set_mode(None))
         self.ts_labels = {"turns": "Each speaker turn", "paragraphs": "Each paragraph",
                           "none": "None"}
         self.ts_mode = "turns"        # remembered between exports
@@ -408,8 +402,8 @@ class App(EditorMixin, ParagraphsMixin):
         self.text.bind("<Button-1>", self._on_text_press)
         self.text.bind("<ButtonRelease-1>", self._on_text_release)
         self.text.bind("<B1-Motion>", self._on_text_drag)
+        self.text.bind(SEEK_BINDING, self._on_text_seek_click)
         self.root.bind("<Escape>", lambda e: self._set_mode(None), add="+")
-        self._sword = file_cursor(self.root, "sword", "crosshair")
         self._needle = file_cursor(self.root, "needle", "hand2")
         self.text.tag_configure("check", foreground=MUTED)
         self.text.tag_configure("checked", foreground=TEXT)
@@ -417,9 +411,6 @@ class App(EditorMixin, ParagraphsMixin):
         for seq in (("<Button-2>", "<Control-Button-1>") if aqua else ("<Button-3>",)):
             self.text.bind(seq, self._on_text_menu)
         self.par_menu = self._menu(self.root)
-        # In merge mode: floats at the top centre of the transcript, over the text
-        self.merge_sel_btn = ttk.Button(body, text="Merge", style="Accent.TButton",
-                                        command=self.merge_selected)
         self.editor = self._build_editor(screen)
 
         self.clear_btn = ttk.Button(bottom, text="Clear", command=self.clear)

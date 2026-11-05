@@ -167,10 +167,12 @@ On Windows, `~` means `C:\Users\<your name>`. After these downloads, `diemut` wo
 
 ![The correction panel: a paragraph open below the transcript, with some words selected and the matching stretch highlighted on its waveform](docs/correct.png)
 
+- As the audio plays, the word being spoken has a **faint yellow highlight** in the text box. It follows your corrections too: words you haven't changed keep their exact timing, and new or changed words are fitted in between.
 - **▶ Play / ‖ Pause** plays the paragraph from the red playhead. Pausing keeps your place, and Play carries on from there.
 - **Select some words** in the text box and press **Ctrl+Space** to hear just those words, from half a second before to half a second after. The matching stretch is tinted on the audio bar.
 - **Click the audio bar** to play from that point. **Drag across it** to play a stretch; the words in that stretch are highlighted in the text.
-- **Double-click a word** in the text box to move the playhead to the start of that word. If audio is playing, it carries on from there; otherwise it waits for Play.
+- **Double-click a word** in the text box to select it and move the playhead to the start of that word. If audio is playing, it carries on from there; otherwise it waits for Play (which then plays the selected word).
+- **Ctrl+Alt+click** (Ctrl+Option+click on a Mac) moves the playhead to exactly where you click: part-way into a word, or the start of the next word if you click between words. Any selected words are deselected, so Play starts from there. It works in the text box, and in the transcript above too, where it opens that paragraph with the playhead at the spot you clicked. If audio is playing, it carries on from there.
 - **⟲ 3 s** jumps back three seconds and keeps playing.
 - **Loop** repeats the selected words or stretch (or the whole paragraph, if nothing is selected) until you pause.
 - **Speed** plays at 0.5×, 0.75×, 1×, 1.25× or 1.5×. Voices keep their normal pitch at every speed.
@@ -187,7 +189,8 @@ Keyboard shortcuts, which all work while you're typing in the text box:
 | Alt+← | Back 3 seconds |
 | Ctrl+L | Loop on or off |
 | Ctrl+↓ / Ctrl+↑ | Slower / faster |
-| Double-click a word | Move the playhead to the start of that word |
+| Double-click a word | Select it and move the playhead to its start |
+| Ctrl+Alt+click (Ctrl+Option+click on a Mac) | Move the playhead to exactly that spot (also in the transcript) |
 | Enter | Split the paragraph at the cursor |
 | Ctrl+Enter | Save the correction |
 | Esc | Discard your changes |
@@ -195,10 +198,10 @@ Keyboard shortcuts, which all work while you're typing in the text box:
 Corrections carry over to every export format. Words you didn't change keep their exact timings, and new or corrected words are fitted into the time between the words around them, so subtitle timing stays accurate. Deleting all the text in a paragraph removes it.
 
 **Paragraphs.** Every paragraph shows its start time. `diemut` starts a new paragraph after a pause of more than 1.5 seconds. To change that:
-- **Merge** (in the middle of the row above the transcript): a check box appears in front of each paragraph, and the pointer becomes a needle and thread. Click a paragraph (or its box) to check it, or **drag** over several to check them all. They need to be next to each other and from the same speaker, so a drag stops where the speaker changes. **Shift+click** checks every paragraph from the last one you clicked. If a paragraph was open, it starts out checked. Then click **Merge N paragraphs**, at the top of the transcript. Click **Merge** again, or press **Esc**, to stop. (While merging, clicks pick paragraphs rather than selecting text.)
-- Click a paragraph, then **Split**: the pointer becomes a small sword. Click the word where the new paragraph should start. Click **Split** again, or press **Esc**, to stop.
-- **Merge** and **Split** are always in the same place. They're faded when they can't be used yet (Split needs an open paragraph), and turn red while they're on.
-- You can also **right-click a paragraph** to split or merge it, or press **Enter** in the correction box.
+- **Merge** (in the middle of the row above the transcript): a check box appears in front of each paragraph, and the pointer becomes a needle and thread. Click a paragraph (or its box) to check it, or **drag** over several to check them all. They need to be next to each other and from the same speaker, so a drag stops where the speaker changes. **Shift+click** checks every paragraph from the last one you clicked. If a paragraph was open, it starts out checked. Then click **Merge N paragraphs**, which takes the Merge button's place, next to **Cancel**. **Cancel** or **Esc** stops. (While merging, clicks pick paragraphs rather than selecting text.)
+- **Merge** is faded when there's only one paragraph.
+- To **split** a paragraph, open it and press **Enter** in the correction box where the new paragraph should start, or right-click the word in the transcript and choose *Split paragraph before “word”*.
+- You can also **right-click a paragraph** to merge it with the one above or below.
 
 Splits and merges carry over to `.txt` and `.docx`. To copy text from the transcript, drag to select it, then press **Ctrl+C** (or right-click and choose *Copy*).
 
