@@ -4,9 +4,9 @@
 
 Everything runs locally. Your audio never leaves your computer; the only internet use is downloading the models the first time you need them.
 
-**Disclaimer:** Other than my snail draing, this was basically fully vibe-coded with Claude!
+**Disclaimer:** Other than my snail drawing, this was basically fully vibe-coded with Claude!
 
-**Fun fact:** "Diemut" is one way of latinising "[Diemoth](https://en.wikipedia.org/wiki/Diemoth)," which was the name of a medieval scribe in Upper Bavaria, Germany (~11th century). I chose it semi-randomly from the English Wikipedia list of [medieval European scribes](https://en.wikipedia.org/wiki/Category:Medieval_European_scribes). 
+**Fun fact:** "Diemut" is one way of latinizing "[Diemoth](https://en.wikipedia.org/wiki/Diemoth)," which was the name of a medieval scribe in Upper Bavaria, Germany (~11th century). I chose it semi-randomly from the English Wikipedia list of [medieval European scribes](https://en.wikipedia.org/wiki/Category:Medieval_European_scribes). 
 
 | Start screen | Transcribing a file | Live from microphone |
 |---|---|---|
