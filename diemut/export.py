@@ -1,4 +1,4 @@
-"""Save transcripts as .txt, .vtt or .docx."""
+"""Save transcripts as .txt, .vtt, .srt or .docx, and live audio as .mp3."""
 
 from .speakers import SENTENCE_ENDS, group_blocks
 
@@ -67,15 +67,31 @@ def _make_cues(pieces, use_speakers):
     return merged
 
 
+def _subtitles(pieces, names, use_speakers):
+    """(start, end, text, speaker name or None) for each subtitle."""
+    for cue in _make_cues(pieces, use_speakers):
+        text = " ".join(cue["text"].split()) if " " in cue["text"] else cue["text"].strip()
+        name = _name(names, cue["speaker"]) if cue["speaker"] is not None else None
+        yield cue["start"], max(cue["end"], cue["start"] + 0.01), text, name
+
+
 def export_vtt(path, pieces, names, use_speakers):
     out = ["WEBVTT", ""]
-    for i, cue in enumerate(_make_cues(pieces, use_speakers), 1):
-        text = " ".join(cue["text"].split()) if " " in cue["text"] else cue["text"].strip()
+    for i, (start, end, text, name) in enumerate(_subtitles(pieces, names, use_speakers), 1):
         text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        if cue["speaker"] is not None:
-            text = f"<v {_name(names, cue['speaker'])}>{text}"
-        end = max(cue["end"], cue["start"] + 0.01)
-        out += [str(i), f"{fmt_time(cue['start'], True)} --> {fmt_time(end, True)}", text, ""]
+        if name:
+            text = f"<v {name}>{text}"
+        out += [str(i), f"{fmt_time(start, True)} --> {fmt_time(end, True)}", text, ""]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out))
+
+
+def export_srt(path, pieces, names, use_speakers):
+    """SubRip subtitles. They have no voice tags, so a speaker is a "Name: " prefix."""
+    out = []
+    for i, (start, end, text, name) in enumerate(_subtitles(pieces, names, use_speakers), 1):
+        times = f"{fmt_time(start, True)} --> {fmt_time(end, True)}".replace(".", ",")
+        out += [str(i), times, f"{name}: {text}" if name else text, ""]
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
 

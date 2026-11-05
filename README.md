@@ -1,6 +1,6 @@
 # diemut
 
-`diemut` (DEE-moot) turns speech into text on your own computer. It can transcribe your microphone live or an audio/video file, label who is speaking, and export the result as `.txt`, `.vtt` (subtitles) or `.docx` (Word).
+`diemut` (DEE-moot) turns speech into text on your own computer. It can transcribe your microphone live or an audio/video file, label who is speaking, and export the result as `.txt`, `.vtt` or `.srt` (subtitles) or `.docx` (Word).
 
 Everything runs locally. Your audio never leaves your computer; the only internet use is downloading the models the first time you need them.
 
@@ -19,7 +19,8 @@ Everything runs locally. Your audio never leaves your computer; the only interne
 - **Live from microphone:** Start, Pause/Resume and Stop. Text appears a few seconds after you speak, grouped into paragraphs at natural pauses.
 - **Audio or video files:** mp3, wav, m4a, mp4, mkv, mov and more. You get timestamps, speaker labels (Speaker 1, Speaker 2…, which you can rename by clicking them) and paragraphs.
 - **Listen and correct:** click any paragraph to play its audio, fix the text, or move it to a different speaker.
-- **Export** to `.txt`, `.vtt` and `.docx`. Speaker names and paragraphs carry over to every format.
+- **Export** to `.txt`, `.vtt`, `.srt` and `.docx`. Speaker names and paragraphs carry over to every format.
+- **Save sessions** as `.diemut` files and open them again later to carry on correcting.
 - **100 languages**, plus a *Multiple languages* option for recordings that switch between languages.
 
 Under the hood, `diemut` uses two models:
@@ -198,6 +199,7 @@ Keyboard shortcuts, which all work while you're typing in the text box:
 | Ctrl+Enter | Save the correction |
 | Esc | Discard your changes and close the panel |
 | Ctrl+S | Save the session (Ctrl+Shift+S saves it under a new name) |
+| Ctrl+Z / Ctrl+Y | In the text box: undo or redo your typing. Elsewhere: undo or redo the last change to the transcript |
 
 Corrections carry over to every export format. Words you didn't change keep their exact timings, and new or corrected words are fitted into the time between the words around them, so subtitle timing stays accurate. Deleting all the text in a paragraph removes it.
 
@@ -212,15 +214,17 @@ Splits and merges carry over to `.txt` and `.docx`. To copy text from the transc
 **Fixing speaker labels** (files, and live recordings once you've used **Find speakers…**). Speaker labelling can give one person several labels, or put two people under one. The **Speakers** window lists every speaker with how long they talk:
 - Type in a name box to **rename** a speaker.
 - **▶** plays a few seconds of that speaker, so you can tell who is who.
-- **Merge into…** gives all of one speaker's words to another, for when one person has several labels. **Undo merge** reverses the last one.
+- **Merge into…** gives all of one speaker's words to another, for when one person has several labels. **Undo** reverses the last change (see *Undo* below).
 - When two people share one label, open a paragraph, select one person's words and choose their speaker (or *New speaker*) in the correction panel.
 - **Find speakers again…** relabels the whole file from the audio. It asks how many people speak (or *Not sure*). It replaces speaker names, merges and changes, but keeps your text corrections.
 
 The window stays usable while speakers are being found, and **Cancel** stops straight away.
 
-**Exporting.** Click **Export…** and choose *Text (.txt)*, *Subtitles (.vtt)* or *Word (.docx)*. In the same box, **Timestamps** sets the times in `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels), *Each paragraph*, or *None*. `.vtt` subtitles always have times. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
+**Exporting.** Click **Export…** and choose *Text (.txt)*, *Subtitles (.vtt)* (for web video players), *Subtitles (.srt)* (for most video players and editors; speakers appear as “Name: ” before their words) or *Word (.docx)*. In the same box, **Timestamps** sets the times in `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels), *Each paragraph*, or *None*. Subtitles always have times. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
 
 **Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, tick **Leave out fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. To have it ticked every time, turn it on in **Settings**. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
+
+**Undo.** **Ctrl+Z** undoes the last change to the transcript, and **Ctrl+Y** (or Ctrl+Shift+Z) redoes it: a saved correction, a paragraph split or merge, a speaker change, a rename or merge in the Speakers window, or new speaker labels from *Find speakers again…*. Up to 30 changes are kept. While you're typing in the correction box, Ctrl+Z undoes your typing instead; the transcript's undo is also in the right-click menu and the Speakers window. Starting a new transcript or opening a session starts a fresh undo history.
 
 **Saving sessions.** **Save** (next to Export…, or **Ctrl+S**) keeps everything as a `.diemut` file: the transcript, your corrections, speaker names, paragraph splits and merges, and the audio, so you can open it again later from the start screen with **Open saved session…** and carry on listening and correcting. The first save asks where to put it; after that, Save updates the same file, and **Ctrl+Shift+S** saves it under a new name. The window title shows the file's name, with a `*` in front while there are changes you haven't saved. A `.diemut` file is about 25 MB per hour of audio (the audio is kept losslessly) and stays on your computer like any other file.
 
@@ -288,13 +292,17 @@ diemut/
 ├── ui.py           the window: start screen, transcript screen, live mini view
 ├── editor.py       the correction panel (listen, correct, save)
 ├── paragraphs.py   merging and splitting paragraphs
-├── dialogs.py      small windows: Speakers, Export, speaker count, tooltips
+├── dialogs.py      small windows: Speakers, Export, Settings, Shortcuts, questions, tooltips
 ├── theme.py        colours, fonts, button styles and mouse pointers
 ├── transcribe.py   Whisper (files and live), model choices, live-mode timing
 ├── speakers.py     speaker labels and paragraph grouping
 ├── timing.py       keeps word timings when you correct a paragraph
 ├── playback.py     audio playback in the correction panel (pause, loop, slower speeds)
-├── export.py       .txt, .vtt and .docx
+├── export.py       .txt, .vtt, .srt, .docx, and .mp3 for live audio
+├── fillers.py      filler words and false starts
+├── history.py      undo and redo
+├── sessions.py     saving and opening sessions, and the recovery copy
+├── settings.py     the settings diemut remembers
 └── languages.py    the language list
 ```
 
@@ -341,17 +349,17 @@ More in the Settings window, for choosing and adding models without editing code
 ### Other improvements
 
 **Working with transcripts**
-- Save and reopen sessions (transcript, corrections and audio), plus autosave, so work isn't lost when `diemut` closes.
 - Highlight words Whisper was unsure about (it reports a confidence for each word), so reviewing goes straight to the likely mistakes.
-- Find, and find-and-replace across the whole transcript (for example, fixing a misspelled name everywhere at once).
+- Find, and find-and-replace across the whole transcript (for example, fixing a misspelled name everywhere at once): a small pop-up opened with Ctrl+F, with Replace and Replace all (undoable).
+- A copy-edit helper for punctuation and obvious word fixes: a small language model, run locally like Whisper, that suggests corrections for a paragraph and shows each change clearly so it can be accepted or rejected.
+- Keep fillers and false starts in languages other than English, too: the word-for-word prompt needs a short example sentence in each language, ideally checked by a speaker of it.
 
 **Research workflows**
 - Batch-transcribe a whole folder of recordings.
-- More export formats: `.srt` subtitles, plus `.csv` or `.json` for qualitative analysis tools such as NVivo, ATLAS.ti and MAXQDA.
+- More export formats: `.csv` or `.json` for qualitative analysis tools such as NVivo, ATLAS.ti and MAXQDA.
 - Help with anonymisation: flag or replace names and other identifying details before transcripts are shared.
 
 **Audio input**
-- Choose which microphone to use.
 - Transcribe the computer's own audio (for example, the other side of a video call), not just the microphone.
 
 **Translation**

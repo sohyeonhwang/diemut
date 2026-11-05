@@ -132,8 +132,11 @@ class SpeakersWindow:
                                     command=self.find_again)
         self.again_btn.pack(side="left")
         ttk.Button(bottom, text="Close", command=self.close).pack(side="right")
-        self.undo_btn = ttk.Button(bottom, text="Undo merge", command=app.undo_merge)
+        self.undo_btn = ttk.Button(bottom, text="Undo", command=app.undo)
         self.undo_btn.pack(side="right", padx=(0, 6))
+        Tooltip(self.undo_btn, "Undo",
+                lambda: f"Undoes the last change to the transcript: the {app.history.undo_label()}."
+                if app.history.undo_label() else "Nothing to undo.")
         self.refresh()
 
     def show(self, focus=None):
@@ -184,7 +187,7 @@ class SpeakersWindow:
             merge.bind("<<ComboboxSelected>>", lambda e, s=spk: self._merge(e, s))
             merge.grid(row=r, column=3, sticky="w")
         busy = app.busy
-        self.undo_btn.configure(state="normal" if app._merge_undo and not busy else "disabled")
+        self.undo_btn.configure(state="disabled" if busy else "normal")
         self.again_btn.configure(state="disabled" if busy or app.audio is None else "normal")
 
     def _merge(self, event, src):
@@ -396,7 +399,7 @@ def export_dialog(app):
     audio_ready = (app.mode == "live" and app.live_state in ("idle", "stopped")
                    and not app.busy and app.audio is not None and bool(app.audio.end))
     formats = [("txt", "Text (.txt)", has_text), ("vtt", "Subtitles (.vtt)", has_text),
-               ("docx", "Word (.docx)", has_text)]
+               ("srt", "Subtitles (.srt)", has_text), ("docx", "Word (.docx)", has_text)]
     if app.mode == "live":
         formats.append(("mp3", "Audio (.mp3)" if audio_ready or app.live_state == "idle"
                         else "Audio (.mp3), after Stop", audio_ready))
@@ -438,7 +441,9 @@ def export_dialog(app):
                  "paragraph, without speaker labels).")
         ts_note.configure(text={
             "txt": turns, "docx": turns,
-            "vtt": "Subtitles always have times.",
+            "vtt": "Subtitles always have times. .vtt is for web video players.",
+            "srt": "Subtitles always have times. .srt works with most video players and "
+                   "editors.",
             "mp3": "The recording, with paused stretches kept as silence so its times "
                    "match the transcript.",
         }[k])

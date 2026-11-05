@@ -13,7 +13,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import export, fillers, playback, sessions, settings, speakers, transcribe
+from . import export, fillers, history, playback, sessions, settings, speakers, transcribe
 from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_choice, ask_speaker_count, count_label,
                       export_dialog, settings_window, SpeakersWindow, Tooltip)
 from .editor import SEEK_BINDING, EditorMixin
@@ -57,7 +57,8 @@ class App(EditorMixin, ParagraphsMixin):
         self._settings_win = None
         self._speakers_win = None
         self._shortcuts_win = None
-        self._merge_undo = None     # (speaker of each piece, names) before the last merge
+        self.history = history.History()   # undo and redo for the transcript
+        self._relabel = False       # finding speakers again (so its result can be undone)
         self.mini_active = False
         self._pending = False
         self._play_job = None
@@ -92,6 +93,9 @@ class App(EditorMixin, ParagraphsMixin):
         root.after(300, self._offer_recovery)
         root.bind("<Control-s>", lambda e: self._save_key(False))
         root.bind("<Control-S>", lambda e: self._save_key(True))       # Ctrl+Shift+S
+        root.bind("<Control-z>", lambda e: self._undo_key(False))
+        root.bind("<Control-y>", lambda e: self._undo_key(True))
+        root.bind("<Control-Z>", lambda e: self._undo_key(True))       # Ctrl+Shift+Z
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_icon(self):
@@ -578,7 +582,7 @@ class App(EditorMixin, ParagraphsMixin):
         self._r = {"prev": None, "par_len": 0}
         self.audio = None
         self._pars = []
-        self._merge_undo = None
+        self.history.clear()
         self.sel = None
 
     # ------------------------------------------------------------- live --
@@ -844,6 +848,7 @@ class App(EditorMixin, ParagraphsMixin):
     # -------------------------------------------------------- rendering --
     def _render_all(self, placeholder=None):
         t = self.text
+        top = t.yview()[0]      # stay where the reader was
         t.configure(state="normal")
         t.delete("1.0", "end")
         self._r = {"prev": None, "par_len": 0}
@@ -887,6 +892,8 @@ class App(EditorMixin, ParagraphsMixin):
             self._r = {"prev": self.pieces[-1],
                        "par_len": len(t.get("end-1c linestart", "end-1c"))}
         t.configure(state="disabled", cursor=self._text_cursor())
+        if top:
+            t.yview_moveto(top)
         self._grey_fillers()
         self._show_open_paragraph(scroll=False)
         self._draw_checks()
@@ -970,6 +977,7 @@ class App(EditorMixin, ParagraphsMixin):
     def rename_speaker(self, spk, name):
         name = name.strip()
         if name and name != self._speaker_name(spk):
+            self._checkpoint("rename")
             self.names[spk] = name
             self._speakers_changed(refresh_window=False)
 
@@ -977,7 +985,7 @@ class App(EditorMixin, ParagraphsMixin):
         """Give all of speaker src's words to speaker dst."""
         self._set_mode(None)
         self._close_editing()
-        self._merge_undo = ([p.get("speaker") for p in self.pieces], dict(self.names))
+        self._checkpoint("speaker merge")
         message = f"Merged {self._speaker_name(src)} into {self._speaker_name(dst)}."
         for p in self.pieces:
             if p.get("speaker") == src:
@@ -985,17 +993,38 @@ class App(EditorMixin, ParagraphsMixin):
         self.names.pop(src, None)
         self._speakers_changed(message)
 
-    def undo_merge(self):
-        if self._merge_undo is None:
+    # -- undo and redo --
+    def _checkpoint(self, label):
+        """Call before changing the transcript; label says what the change is."""
+        self.history.push(label, history.snapshot(self.pieces, self.names))
+
+    def undo(self, redo=False):
+        """Undo (or redo) the last change to the transcript."""
+        if self.busy:
             return
         self._set_mode(None)
-        self._close_editing()
-        ids, self.names = self._merge_undo
-        self._merge_undo = None
-        if len(ids) == len(self.pieces):   # skip it if a correction changed the words since
-            for p, spk in zip(self.pieces, ids):
-                p["speaker"] = spk
-        self._speakers_changed("Merge undone.")
+        self._close_editing()        # saving an open correction is a change of its own
+        label = self.history.redo_label() if redo else self.history.undo_label()
+        if label is None:
+            self.status_lbl.configure(text=f"Nothing to {'redo' if redo else 'undo'}.")
+            return
+        step = self.history.redo if redo else self.history.undo
+        _, snap = step(history.snapshot(self.pieces, self.names))
+        self.pieces, self.names = history.restore(snap)
+        self.sel = None
+        self._speakers_changed(f"Redid the {label}." if redo else
+                               f"Undid the {label}. Ctrl+Y redoes it.")
+
+    def _undo_key(self, redo):
+        """Ctrl+Z / Ctrl+Y, unless a text box with its own undo is being typed in."""
+        w = self.root.focus_get()
+        typing = w is not None and w.winfo_ismapped() and (
+            isinstance(w, (tk.Entry, ttk.Entry)) or
+            (isinstance(w, tk.Text) and str(w.cget("state")) == "normal"))
+        if not typing and self.transcript_screen.winfo_ismapped():
+            self.undo(redo)
+            return "break"
+        return None
 
     def find_live_speakers(self):
         """Label speakers in a stopped live recording, after asking how many there are."""
@@ -1015,6 +1044,7 @@ class App(EditorMixin, ParagraphsMixin):
             return
         self._set_mode(None)
         self._close_editing()
+        self._relabel = True
         emit = self._new_session()
         self.busy = True
         self.stage = None
@@ -1068,18 +1098,20 @@ class App(EditorMixin, ParagraphsMixin):
             self._render_all("")
         elif kind == "speakers":
             self._set_mode(None)
+            if self._relabel:
+                self._checkpoint("new speaker labels")
             ids, count = payload
             for piece, spk in zip(self.pieces, ids):
                 piece["speaker"] = spk
             self.speaker_count = count
             self.names = {}
-            self._merge_undo = None
             self._render_all()
             self._update_header_tags()
             if self._speakers_win is not None:
                 self._speakers_win.refresh()
         elif kind in ("done", "error"):
             self.busy = False
+            self._relabel = False
             self.progress.pack_forget()
             self._set_pending(False)
             if self.mode == "live":
@@ -1332,6 +1364,8 @@ class App(EditorMixin, ParagraphsMixin):
                 export.export_txt(path, pieces, self.names, use_speakers, self._timestamps())
             elif kind == "vtt":
                 export.export_vtt(path, pieces, self.names, use_speakers)
+            elif kind == "srt":
+                export.export_srt(path, pieces, self.names, use_speakers)
             else:
                 lang = (language_name(self.detected_language) + " (detected)"
                         if self.session_language == AUTO and self.detected_language

@@ -97,7 +97,10 @@ class ParagraphsMixin:
         self._mode = mode
         self._merge_range = self._merge_anchor = None
         self._press = None
-        self._draw_checks()
+        if mode == "merge":
+            self._draw_checks()
+        else:
+            self._render_all()      # without the boxes: much faster than deleting each one
         self.text.configure(cursor=self._text_cursor())
         self._update_par_tools()
         self.status_lbl.configure(text=self.MODE_HINTS.get(mode, ""))
@@ -118,8 +121,12 @@ class ParagraphsMixin:
         return all(self._same_speaker(k, k + 1) for k in range(a, b))
 
     def _set_merge_range(self, new, anchor):
+        old = self._merge_range
         self._merge_range, self._merge_anchor = new, anchor
-        self._draw_checks()
+        inside = lambda r, k: r is not None and r[0] <= k <= r[1]
+        changed = set(range(old[0], old[1] + 1) if old else ()) | \
+            set(range(new[0], new[1] + 1) if new else ())
+        self._draw_checks([k for k in changed if inside(old, k) != inside(new, k)])
         self._update_par_tools()
         n = new[1] - new[0] + 1 if new else 0
         self.status_lbl.configure(text=f"{n} paragraph{'' if n == 1 else 's'} checked." if n
@@ -174,23 +181,26 @@ class ParagraphsMixin:
                 new = (min(a, k), max(b, k))
         self._set_merge_range(new, k)
 
-    def _draw_checks(self):
-        """A ☐ / ☑ in front of each paragraph in merge mode; none otherwise."""
+    def _draw_checks(self, only=None):
+        """In merge mode, a ☐ / ☑ in front of each paragraph: drawn for all of them on a
+        transcript that has none yet (after _render_all, or entering merge mode), or with
+        only, redrawn for just those paragraphs. Deleting many small stretches of a Tk text
+        is slow on long transcripts, so the boxes are never all removed one by one."""
+        if self._mode != "merge":
+            return
         t = self.text
         t.configure(state="normal")
-        ranges = t.tag_ranges("check")
-        for i in range(len(ranges) - 2, -1, -2):
-            t.delete(ranges[i], ranges[i + 1])
-        if self._mode == "merge":
-            a, b = self._merge_range or (-1, -2)
-            for k in range(len(self._pars)):
-                ranges = t.tag_ranges(f"par:{k}")
-                if ranges:
-                    checked = a <= k <= b
-                    t.insert(ranges[0], ("☑" if checked else "☐") + " ",
-                             # "para": a line's spacing comes from its first character
-                             ("check", f"check:{k}", "checked" if checked else "unchecked",
-                              "para"))
+        a, b = self._merge_range or (-1, -2)
+        for k in range(len(self._pars)) if only is None else only:
+            old = t.tag_ranges(f"check:{k}")
+            if old:
+                t.delete(*old)
+            at = t.tag_ranges(f"par:{k}")
+            if at:
+                checked = a <= k <= b
+                t.insert(at[0], ("☑" if checked else "☐") + " ",
+                         # "para": a line's spacing comes from its first character
+                         ("check", f"check:{k}", "checked" if checked else "unchecked", "para"))
         t.configure(state="disabled")
 
     def _update_par_tools(self):
@@ -227,6 +237,8 @@ class ParagraphsMixin:
     def _apply_marks(self, marks, keep, status):
         """Split or merge paragraphs: set "par" marks on pieces, then open the paragraph
         holding piece keep. Any open correction must be saved first."""
+        splits = all(mark == "start" for _, mark in marks)
+        self._checkpoint("paragraph split" if splits else "paragraph merge")
         for i, mark in marks:
             self.pieces[i]["par"] = mark
         self.dirty = True
@@ -269,6 +281,14 @@ class ParagraphsMixin:
                     self._apply_marks([(b, "join")], a, "Paragraphs merged.")))
         if menu.index("end") is None:
             menu.add_command(label="Nothing to split or merge here", state="disabled")
+        undo, redo = self.history.undo_label(), self.history.redo_label()
+        if undo or redo:
+            menu.add_separator()
+        if undo:
+            menu.add_command(label=f"Undo {undo}", accelerator="Ctrl+Z", command=self.undo)
+        if redo:
+            menu.add_command(label=f"Redo {redo}", accelerator="Ctrl+Y",
+                             command=lambda: self.undo(redo=True))
         menu.tk_popup(event.x_root, event.y_root)
         return "break"
 

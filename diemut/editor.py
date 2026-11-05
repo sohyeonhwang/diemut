@@ -249,6 +249,7 @@ class EditorMixin:
         par = self._pars[self.sel]
         i0, i1 = par["i0"], par["i1"]
         old = self.pieces[i0:i1]
+        self._checkpoint("correction" if text_changed else "speaker change")
         # Unchanged words keep their times; corrected ones fill the gaps around them.
         new = timing.retime(old, new_text) if text_changed else [dict(p) for p in old]
         if speaker_changed:
@@ -669,6 +670,7 @@ class EditorMixin:
         if self.sel is None or not selected or chosen is None:
             return
         self._set_mode(None)      # this can renumber paragraphs
+        self._checkpoint("speaker change")
         par = self._pars[self.sel]
         i0, i1 = par["i0"], par["i1"]
         spans = timing.retime_spans(self.pieces[i0:i1], self.edit_box.get("1.0", "end-1c"))

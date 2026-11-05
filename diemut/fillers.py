@@ -18,16 +18,18 @@ import re
 from . import speakers
 
 _FILLER = re.compile(r"u+[mh]+|e+r+m*|a+h+|h+m+|m{2,}|m+h+m+")
+_NOT_LETTER = re.compile(r"[^a-z]")
+_NOT_WORD = re.compile(r"[^\w']")
 _DASHES = ("-", "–", "—")
 _SENTENCE_ENDS = (".", "?", "!")
 
 
 def _letters(text):
-    return re.sub(r"[^a-z]", "", text.lower())
+    return _NOT_LETTER.sub("", text.lower())
 
 
 def _norm(text):
-    return re.sub(r"[^\w']", "", text.lower())
+    return _NOT_WORD.sub("", text.lower())
 
 
 def is_filler(text):
@@ -42,17 +44,20 @@ def _is_dash(text):
 
 def _false_starts(pieces):
     """Indices of the pieces that are false starts, with any dash or filler after them."""
-    words = [i for i, p in enumerate(pieces)
-             if _norm(p["text"]) and not is_filler(p["text"]) and not _is_dash(p["text"])]
+    words, said = [], []        # the real words, and each one as compared (once per word)
+    for i, p in enumerate(pieces):
+        norm = _norm(p["text"])
+        if norm and not is_filler(p["text"]) and not _is_dash(p["text"]):
+            words.append(i)
+            said.append(norm)
     out = set()
     for pos in range(1, len(words)):
         for n in (3, 2, 1):
             if pos - n < 0 or pos + n > len(words):
                 continue
-            first, again = words[pos - n:pos], words[pos:pos + n]
-            said = [_norm(pieces[i]["text"]) for i in first + again]
-            if said[:n] != said[n:]:
+            if said[pos - n:pos] != said[pos:pos + n]:
                 continue
+            first, again = words[pos - n:pos], words[pos:pos + n]
             if len({pieces[i].get("speaker") for i in first + again}) > 1:
                 continue
             between = [pieces[i]["text"] for i in range(first[-1] + 1, again[0])]
