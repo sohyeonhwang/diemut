@@ -15,9 +15,7 @@ Please check each project's current license before redistributing diemut in a bu
 
 ## App icon
 
-diemut's icon (`diemut/assets/`) is an anonymous woodcut of a writer at a desk, from *La Vie des troys Maries* (1547), placed on a square white background.
-
-The woodcut is in the public domain: it was published anonymously long before 1931. The digital copy used is [Writer at desk (1547) on Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Writer_at_desk_(1547).svg), uploaded by Cbaile19 from the [Internet Archive scan of the book](https://archive.org/details/LaVieDesTroysMaries1547/page/n5/mode/2up). No attribution is required; this credit is a courtesy.
+diemut's icon (`diemut/assets/`) is drawing of a little snail I drew, inspired by the weird medieval snail marginalia. 
 
 ## Libraries
 
