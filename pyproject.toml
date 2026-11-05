@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diemut"
+version = "0.1.0"
+description = "Local speech-to-text for live audio and recordings, with speaker labels and TXT/VTT/DOCX export."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+dependencies = [
+    "faster-whisper>=1.1.0",
+    # faster-whisper 1.2.x can't read audio with PyAV 19 or newer.
+    "av>=11,<19",
+    "sherpa-onnx>=1.10.0",
+    "sounddevice>=0.4.6",
+    "python-docx>=1.1.0",
+    "numpy",
+]
+
+[project.scripts]
+diemut = "diemut.__main__:main"
+
+[tool.setuptools]
+packages = ["diemut"]
+
+[tool.setuptools.package-data]
+diemut = ["assets/*"]
