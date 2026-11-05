@@ -149,10 +149,12 @@ On Windows, `~` means `C:\Users\<your name>`. After these downloads, `diemut` wo
 
 ## Using diemut
 
-**Start screen.** Choose the **STT model** and **Language**, then pick a mode. Hover over the model names under the title to see what each one does. For files, you can also choose how many **Speakers** there are, if you know; this makes the speaker labels more accurate. Leave it at *Not sure* and `diemut` counts them, or choose *1 person* to skip speaker labelling. Live recordings ask after you press Stop.
+**Start screen.** Choose the **STT model** and **Language**, then pick a mode. Hover over the model names under the title to see what each one does. For files, you can also choose how many **Speakers** there are, if you know; this makes the speaker labels more accurate. Leave it at *Not sure* and `diemut` counts them, or choose *1 person* to skip speaker labelling. Live recordings ask after you press Stop. For live mode, choose the **Microphone** to record from; *System default* is the one your computer uses. A headset plugged in after `diemut` started shows up in the list too.
 
 **Live from microphone**
-1. Click **Start** and speak. Text appears a few seconds behind you, after each natural pause.
+This *won't* capture audio coming from your laptop/machine, so note that you can't live transcribe, say, a video call. It is better to record that with another software and upload the audio to `diemut` from file. 
+
+1. Click **Start** and speak. (If the microphone you chose has been unplugged, `diemut` asks whether to use the system default.) Text appears a few seconds behind you, after each natural pause.
 2. **Pause** stops listening without ending the session; **Resume** carries on. Timestamps keep counting in real time while paused.
 3. **Stop** ends the session and transcribes your last few words. **Export… → Audio (.mp3)** then saves the recording. Paused stretches are kept as silence, so times in the audio match the transcript.
 4. Live mode doesn't label speakers while you record. After **Stop**, **Find speakers…** asks how many people spoke (or *Not sure*) and labels the recording, just as for a file.

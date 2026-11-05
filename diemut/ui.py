@@ -26,6 +26,7 @@ from .theme import (ACCENT, BG, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
                "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv")
 SEPARATOR = "────"
+DEFAULT_MIC = "System default"
 
 
 class App(EditorMixin, ParagraphsMixin):
@@ -50,6 +51,7 @@ class App(EditorMixin, ParagraphsMixin):
         self.stage = None
         self.player = playback.Player()
         self.num_speakers = None    # how many people speak in the next file, if known
+        self.mic_name = None        # the microphone for live mode, by name; None: the default
         self._speakers_win = None
         self._merge_undo = None     # (speaker of each piece, names) before the last merge
         self.mini_active = False
@@ -245,6 +247,18 @@ class App(EditorMixin, ParagraphsMixin):
                     "accurate speaker labels. For live recordings, you can find speakers "
                     "after you press Stop.")
 
+        lbl = tk.Label(form, text="Microphone", font=FONTS["label"], fg=TEXT2, bg=BG)
+        lbl.grid(row=3, column=0, sticky="e", padx=(0, 10), pady=3)
+        self.mic_box = ttk.Combobox(form, style="Subtle.TCombobox", state="readonly",
+                                    font=FONTS["dropdown"], width=40,
+                                    postcommand=self._fill_mics)   # fresh each time it opens
+        self.mic_box.set(DEFAULT_MIC)
+        self.mic_box.grid(row=3, column=1, sticky="w", pady=3)
+        self.mic_box.bind("<<ComboboxSelected>>", self._on_mic)
+        for w in (lbl, self.mic_box):
+            Tooltip(w, "Microphone", "What live mode records from. A microphone or headset "
+                                     "plugged in after diemut started shows up here too.")
+
         self.note = tk.Label(inner, text="", font=FONTS["small"], fg=MUTED, bg=BG,
                              wraplength=460, justify="center")
         return screen
@@ -294,6 +308,14 @@ class App(EditorMixin, ParagraphsMixin):
         self.model_tag.configure(text=f"whisper-{self.model_name}")
         self.model_box.selection_clear()
         self._update_note()
+
+    def _fill_mics(self):
+        self.mic_box.configure(values=[DEFAULT_MIC] + [n for _, n in transcribe.input_devices()])
+
+    def _on_mic(self, _event=None):
+        label = self.mic_box.get()
+        self.mic_name = None if label == DEFAULT_MIC else label
+        self.mic_box.selection_clear()
 
     def _on_count(self, _event=None):
         self.num_speakers = next(n for n in SPEAKER_COUNTS
@@ -536,6 +558,13 @@ class App(EditorMixin, ParagraphsMixin):
             return
         if not self._confirm_discard("start a new recording"):
             return
+        device = transcribe.find_input(self.mic_name) if self.mic_name else None
+        if self.mic_name and device is None:
+            if not messagebox.askyesno(
+                    "Microphone not connected",
+                    f"diemut can't find the microphone “{self.mic_name}”. It may have been "
+                    "unplugged.\n\nRecord with the system default microphone instead?"):
+                return
         self.reset_transcript()
         self._render_all("")
         emit = self._new_session()
@@ -549,7 +578,7 @@ class App(EditorMixin, ParagraphsMixin):
         self._update_mini_text()
         threading.Thread(target=transcribe.live_worker, daemon=True,
                          args=(self.stt, self.model_name, self.language, emit,
-                               self.stop_event, self.pause_event)).start()
+                               self.stop_event, self.pause_event, device)).start()
 
     def toggle_pause(self):
         if self.live_state == "recording":
@@ -747,6 +776,9 @@ class App(EditorMixin, ParagraphsMixin):
         tags = [f"whisper-{self.model_name}", lang]
         if self.speaker_count:
             tags.append(f"{self.speaker_count} speaker{'s' if self.speaker_count > 1 else ''}")
+        if self.mode == "live" and self.mic_name:
+            name = self.mic_name if len(self.mic_name) <= 28 else self.mic_name[:27] + "…"
+            tags.insert(0, f"{MIC_ICON} {name}")
         for t in tags:
             tag = self._tag(self.header_tags, t)
             tag.pack(side="left", padx=(6, 0))

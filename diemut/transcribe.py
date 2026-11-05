@@ -281,7 +281,39 @@ def _transcribe_words(model, audio, duration, language, emit, stop_event):
 # --------------------------------------------------------------------------- #
 # Live transcription
 # --------------------------------------------------------------------------- #
-def live_worker(stt, model_name, language, emit, stop_event, pause_event):
+def input_devices():
+    """The microphones and other inputs, as [(device index, name)], each listed once.
+
+    Windows lists every device once per audio system (MME, DirectSound, WASAPI…), and MME
+    cuts names to 31 characters, so this uses DirectSound there (full names, and it records
+    at any sample rate) and the default audio system elsewhere. [] if there's no audio.
+    """
+    try:
+        import sounddevice as sd
+        devices, hostapis = sd.query_devices(), sd.query_hostapis()
+        hostapi = next((i for i, h in enumerate(hostapis) if h["name"] == "Windows DirectSound"),
+                       sd.default.hostapi)
+    except Exception:
+        return []
+    out, seen = [], set()
+    for i, d in enumerate(devices):
+        if d["max_input_channels"] > 0 and d["hostapi"] == hostapi and d["name"] not in seen:
+            seen.add(d["name"])
+            out.append((i, d["name"]))
+    return out
+
+
+def find_input(name):
+    """The device index of the input called name, or None if it isn't connected now.
+
+    Indexes change as devices are plugged in, so look the name up just before recording.
+    """
+    return next((i for i, n in input_devices() if n == name), None)
+
+
+def live_worker(stt, model_name, language, emit, stop_event, pause_event, device=None):
+    """Transcribe the microphone: device is an index from input_devices, or None for the
+    system default."""
     import sounddevice as sd
     stream = None
     try:
@@ -293,10 +325,12 @@ def live_worker(stt, model_name, language, emit, stop_event, pause_event):
 
         rate = SAMPLE_RATE
         try:
-            stream = sd.InputStream(samplerate=rate, channels=1, dtype="float32", callback=callback)
+            stream = sd.InputStream(device=device, samplerate=rate, channels=1, dtype="float32",
+                                    callback=callback)
         except Exception:
-            rate = int(sd.query_devices(kind="input")["default_samplerate"])
-            stream = sd.InputStream(samplerate=rate, channels=1, dtype="float32", callback=callback)
+            rate = int(sd.query_devices(device, "input")["default_samplerate"])
+            stream = sd.InputStream(device=device, samplerate=rate, channels=1, dtype="float32",
+                                    callback=callback)
         clip = AudioClip()
         emit("audio", clip)
         stream.start()
