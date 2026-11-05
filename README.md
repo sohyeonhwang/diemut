@@ -8,11 +8,11 @@ Everything runs locally. Your audio never leaves your computer; the only interne
 
 **Fun fact:** "Diemut" is one way of latinizing "[Diemoth](https://en.wikipedia.org/wiki/Diemoth)," which was the name of a medieval scribe in Upper Bavaria, Germany (~11th century). I chose it semi-randomly from the English Wikipedia list of [medieval European scribes](https://en.wikipedia.org/wiki/Category:Medieval_European_scribes). 
 
-| Start screen | Transcribing a file | Live from microphone |
-|---|---|---|
-| ![Start screen](docs/start.png) | ![A finished file transcript with speaker labels](docs/file.png) | ![Live transcription while recording](docs/live.png) |
+| Start screen | Transcribing a file | Live from microphone | Editing text |
+|---|---|---|---|
+| ![Start screen](docs/start.png) | ![A finished file transcript with speaker labels](docs/file.png) | ![Live transcription while recording](docs/live.png) | ![Editing the transcription text](docs/correct.png) |
 
-*(Simulated screenshots show* `diemut` *with Windows' fonts, Segoe UI and Consolas. On macOS and Linux it looks much the same but uses your system's fonts. Note these are not real transcripts, they're made up.)*
+*(Simulated screenshots show* `diemut` *with Windows' fonts, Segoe UI and Consolas. On macOS and Linux it looks much the same but uses your system's fonts. Note these are not real transcripts, they're made up. Also for whatever reason this screenshot looks sleeker than the actual interface.)*
 
 ## What it does
 
@@ -370,7 +370,7 @@ More in the Settings window, for choosing and adding models without editing code
 - Dark mode, adjustable text size and full keyboard navigation.
 
 **Prettier user interface**
-- Making the UI a bit nicer and prettier, but I don't mind the current version either. It does the job. Maybe a nice little `diemut` snail slugging along while things load just for my little joys...
+- Making the UI a bit nicer and "prettier," but I don't mind the current version either. It does the job. Maybe a nice little `diemut` snail slugging along while things load...
 
 ## License
 
