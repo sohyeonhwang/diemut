@@ -355,25 +355,24 @@ def live_worker(stt, model_name, language, emit, stop_event, pause_event):
 
 
 def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
+    def run():
+        segments, info = state["model"].transcribe(
+            audio, language=state["language"], beam_size=1, vad_filter=True,
+            condition_on_previous_text=False, initial_prompt=state["prompt"] or None,
+            word_timestamps=True)
+        return list(segments), info
+
     emit("pending", True)
     try:
         try:
-            segments, info = state["model"].transcribe(
-                audio, language=state["language"], beam_size=1, vad_filter=True,
-                condition_on_previous_text=False, initial_prompt=state["prompt"] or None,
-                word_timestamps=True)
-            segments = list(segments)
+            segments, info = run()
         except Exception as exc:
             if stt.device != "cuda" or not _is_gpu_error(exc):
                 raise
             emit("status", "The GPU didn't work, so diemut is switching to the CPU…")
             stt.fall_back_to_cpu()
             state["model"] = stt.load(model_name, lambda m: emit("status", m))
-            segments, info = state["model"].transcribe(
-                audio, language=state["language"], beam_size=1, vad_filter=True,
-                condition_on_previous_text=False, initial_prompt=state["prompt"] or None,
-                word_timestamps=True)
-            segments = list(segments)
+            segments, info = run()
             emit("status", "Listening… speak into your microphone.")
     finally:
         emit("pending", False)

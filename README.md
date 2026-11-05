@@ -170,6 +170,7 @@ On Windows, `~` means `C:\Users\<your name>`. After these downloads, `diemut` wo
 - **▶ Play / ‖ Pause** plays the paragraph from the red playhead. Pausing keeps your place, and Play carries on from there.
 - **Select some words** in the text box and press **Ctrl+Space** to hear just those words, from half a second before to half a second after. The matching stretch is tinted on the audio bar.
 - **Click the audio bar** to play from that point. **Drag across it** to play a stretch; the words in that stretch are highlighted in the text.
+- **Double-click a word** in the text box to move the playhead to the start of that word. If audio is playing, it carries on from there; otherwise it waits for Play.
 - **⟲ 3 s** jumps back three seconds and keeps playing.
 - **Loop** repeats the selected words or stretch (or the whole paragraph, if nothing is selected) until you pause.
 - **Speed** plays at 0.5×, 0.75×, 1×, 1.25× or 1.5×. Voices keep their normal pitch at every speed.
@@ -186,20 +187,27 @@ Keyboard shortcuts, which all work while you're typing in the text box:
 | Alt+← | Back 3 seconds |
 | Ctrl+L | Loop on or off |
 | Ctrl+↓ / Ctrl+↑ | Slower / faster |
+| Double-click a word | Move the playhead to the start of that word |
 | Enter | Split the paragraph at the cursor |
 | Ctrl+Enter | Save the correction |
 | Esc | Discard your changes |
 
 Corrections carry over to every export format. Words you didn't change keep their exact timings, and new or corrected words are fitted into the time between the words around them, so subtitle timing stays accurate. Deleting all the text in a paragraph removes it.
 
-**Paragraphs.** Every paragraph shows its start time. `diemut` starts a new paragraph after a pause of more than 1.5 seconds; to change that, **right-click a paragraph** and choose *Split paragraph before “word”* (at the word you clicked) or *Merge with paragraph above/below* (same speaker only). Splits and merges carry over to `.txt` and `.docx`.
+**Paragraphs.** Every paragraph shows its start time. `diemut` starts a new paragraph after a pause of more than 1.5 seconds. To change that:
+- **Merge** (in the middle of the row above the transcript): a check box appears in front of each paragraph, and the pointer becomes a needle and thread. Click a paragraph (or its box) to check it, or **drag** over several to check them all. They need to be next to each other and from the same speaker, so a drag stops where the speaker changes. **Shift+click** checks every paragraph from the last one you clicked. If a paragraph was open, it starts out checked. Then click **Merge N paragraphs**, at the top of the transcript. Click **Merge** again, or press **Esc**, to stop. (While merging, clicks pick paragraphs rather than selecting text.)
+- Click a paragraph, then **Split**: the pointer becomes a small sword. Click the word where the new paragraph should start. Click **Split** again, or press **Esc**, to stop.
+- **Merge** and **Split** are always in the same place. They're faded when they can't be used yet (Split needs an open paragraph), and turn red while they're on.
+- You can also **right-click a paragraph** to split or merge it, or press **Enter** in the correction box.
+
+Splits and merges carry over to `.txt` and `.docx`. To copy text from the transcript, drag to select it, then press **Ctrl+C** (or right-click and choose *Copy*).
 
 **Fixing speaker labels** (files, and live recordings once you've used **Find speakers…**). Speaker labelling can give one person several labels, or put two people under one. The **Speakers** window lists every speaker with how long they talk:
 - Type in a name box to **rename** a speaker.
 - **▶** plays a few seconds of that speaker, so you can tell who is who.
 - **Merge into…** gives all of one speaker's words to another, for when one person has several labels. **Undo merge** reverses the last one.
 - When two people share one label, open a paragraph, select one person's words and choose their speaker (or *New speaker*) in the correction panel.
-- **Find speakers again** relabels the whole file from the audio, optionally with a known number of speakers. It replaces speaker names, merges and changes, but keeps your text corrections.
+- **Find speakers again…** relabels the whole file from the audio. It asks how many people speak (or *Not sure*). It replaces speaker names, merges and changes, but keeps your text corrections.
 
 The window stays usable while speakers are being found, and **Cancel** stops straight away.
 
@@ -255,7 +263,11 @@ If you downloaded the ZIP, download the new ZIP and replace the old folder inste
 ```
 diemut/
 ├── __main__.py     starts the app
-├── ui.py           start screen and transcript screen
+├── ui.py           the window: start screen, transcript screen, live mini view
+├── editor.py       the correction panel (listen, correct, save)
+├── paragraphs.py   merging and splitting paragraphs
+├── dialogs.py      small windows: Speakers, Export, speaker count, tooltips
+├── theme.py        colours, fonts, button styles and mouse pointers
 ├── transcribe.py   Whisper (files and live), model choices, live-mode timing
 ├── speakers.py     speaker labels and paragraph grouping
 ├── timing.py       keeps word timings when you correct a paragraph

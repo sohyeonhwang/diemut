@@ -1,280 +1,40 @@
-"""diemut's window: the start screen and the transcript screen."""
+"""diemut's window: the start screen, the transcript screen and the live mini view.
+
+The correction panel is in editor.py and merging and splitting in paragraphs.py
+(both mixed into App); dialogs.py has the small windows and theme.py the look.
+"""
 
 import datetime as dt
 import os
 import queue
-import sys
 import threading
 import time
 import tkinter as tk
-import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
-import numpy as np
-
-from . import export, playback, speakers, timing, transcribe
+from . import export, playback, speakers, transcribe
+from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_speaker_count, count_label,
+                      export_dialog, SpeakersWindow, Tooltip)
+from .editor import EditorMixin
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
-
-# Simple symbols for the two modes, the same on every platform. Newer emoji only draw
-# reliably in Tk on Windows, so the lock is left out elsewhere.
-WINDOWS = sys.platform == "win32"
-MIC_ICON = "◉"
-FILE_ICON = "▤"
-LOCK = "🔒 " if WINDOWS else ""
-PLAY_LABEL = "▶ Play"
-PAUSE_LABEL = "‖ Pause"
-
-BG = "#ffffff"
-SURFACE = "#f4f4f2"
-HOVER = "#eef3fb"
-BORDER = "#dcdbd5"
-BORDER_STRONG = "#b9b8b1"
-TEXT = "#1f1f1d"
-TEXT2 = "#5f5e5a"
-MUTED = "#8f8e88"
-ACCENT = "#51b5d1"
-DANGER = "#c90065"
+from .paragraphs import ParagraphsMixin
+from .theme import (ACCENT, BG, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK, MIC_ICON,
+                    MUTED, SURFACE, TEXT, TEXT2, WINDOWS, file_cursor,
+                    setup_style)
 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
                "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv")
 SEPARATOR = "────"
-SPEAKER_COUNTS = (None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-
-FONTS = {}
 
 
-class Tooltip:
-    """A small pop-up that appears while the mouse is over a widget."""
-
-    def __init__(self, widget, title, text):
-        self.widget, self.title, self.text, self.tip = widget, title, text, None
-        widget.bind("<Enter>", self.show, add="+")
-        widget.bind("<Leave>", self.hide, add="+")
-
-    def show(self, _event=None):
-        if self.tip is not None:
-            return
-        text = self.text() if callable(self.text) else self.text
-        tip = tk.Toplevel(self.widget)
-        tip.wm_overrideredirect(True)
-        try:
-            tip.attributes("-topmost", True)
-        except tk.TclError:
-            pass
-        frame = tk.Frame(tip, bg=BG, highlightthickness=1,
-                         highlightbackground=BORDER_STRONG, padx=10, pady=7)
-        tk.Label(frame, text=self.title, font=FONTS["small_bold"], fg=TEXT2, bg=BG,
-                 anchor="w").pack(fill="x")
-        tk.Label(frame, text=text, font=FONTS["small"], fg=TEXT, bg=BG, wraplength=260,
-                 justify="left", anchor="w").pack(fill="x")
-        frame.pack()
-        tip.update_idletasks()
-        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2 - tip.winfo_reqwidth() // 2
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
-        tip.geometry(f"+{max(0, x)}+{y}")
-        self.tip = tip
-
-    def hide(self, _event=None):
-        if self.tip is not None:
-            self.tip.destroy()
-            self.tip = None
-
-
-def _shade(color, factor):
-    """color ("#rrggbb") darkened by factor (0.9 = 10% darker)."""
-    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
-    return "#%02x%02x%02x" % tuple(max(0, min(255, round(c * factor))) for c in (r, g, b))
-
-
-def center_over(win, parent):
-    """Place a pop-up window over the middle of parent's window, kept on screen."""
-    win.update_idletasks()
-    top = parent.winfo_toplevel()
-    w, h = win.winfo_reqwidth(), win.winfo_reqheight()
-    x = top.winfo_rootx() + (top.winfo_width() - w) // 2
-    y = top.winfo_rooty() + (top.winfo_height() - h) // 3
-    x = max(0, min(x, win.winfo_screenwidth() - w))
-    y = max(0, min(y, win.winfo_screenheight() - h - 40))
-    win.geometry(f"+{x}+{y}")
-
-
-class SpeakersWindow:
-    """A small window for renaming and merging speakers, or finding them again."""
-
-    def __init__(self, app):
-        self.app = app
-        self.player = playback.Player()
-        self._sample = None       # (button, speaker) being played
-        win = self.win = tk.Toplevel(app.root, bg=BG, padx=16, pady=14)
-        win.withdraw()   # shown by show(), once it's placed over the main window
-        win.title("Speakers")
-        win.transient(app.root)
-        win.resizable(False, False)
-        win.protocol("WM_DELETE_WINDOW", self.close)
-        win.bind("<Escape>", lambda e: self.close())
-        tk.Label(win, text="Speakers", font=FONTS["header"], fg=TEXT, bg=BG,
-                 anchor="w").pack(fill="x")
-        tk.Label(win, text="If one person has several labels, merge them. If two people share "
-                           "a label, select one person's words in the correction panel and "
-                           "choose their speaker there.",
-                 font=FONTS["small"], fg=TEXT2, bg=BG, anchor="w", justify="left",
-                 wraplength=int(430 * app._scale)).pack(fill="x", pady=(2, 10))
-        self.rows = tk.Frame(win, bg=BG)
-        self.rows.pack(fill="x")
-
-        again = tk.Frame(win, bg=BG)
-        again.pack(fill="x", pady=(14, 0))
-        tk.Label(again, text="Find speakers again with", font=FONTS["body"], fg=TEXT2,
-                 bg=BG).pack(side="left")
-        self.count_box = ttk.Combobox(again, style="Subtle.TCombobox", state="readonly",
-                                      font=FONTS["dropdown"], width=30,
-                                      values=[app._count_label(n) for n in SPEAKER_COUNTS])
-        self.count_box.set(app._count_label(None))
-        self.count_box.pack(side="left", padx=6)
-        self.again_btn = ttk.Button(again, text="Find again…", style="Accent.TButton", command=self.find_again)
-        self.again_btn.pack(side="left")
-
-        bottom = tk.Frame(win, bg=BG)
-        bottom.pack(fill="x", pady=(14, 0))
-        ttk.Button(bottom, text="Close", command=self.close).pack(side="right")
-        self.undo_btn = ttk.Button(bottom, text="Undo merge", command=app.undo_merge)
-        self.undo_btn.pack(side="right", padx=(0, 6))
-        self.refresh()
-        center_over(win, app.root)
-
-    def show(self, focus=None):
-        self.win.deiconify()
-        self.win.lift()
-        entry = self._entries.get(focus)
-        (entry or self.win).focus_set()
-        if entry:
-            entry.select_range(0, "end")
-
-    def refresh(self):
-        """Rebuild the rows from the transcript."""
-        app = self.app
-        self._stop_sample()
-        for w in self.rows.winfo_children():
-            w.destroy()
-        self._entries = {}
-        ids = app._speaker_ids()
-        talk = {spk: 0.0 for spk in ids}
-        for p in app.pieces:
-            if p.get("speaker") in talk:
-                talk[p["speaker"]] += p["end"] - p["start"]
-        for c, text in enumerate(("Name", "Talks for", "", "")):
-            tk.Label(self.rows, text=text, font=FONTS["small"], fg=MUTED, bg=BG).grid(
-                row=0, column=c, sticky="w", padx=(0, 10))
-        for r, spk in enumerate(ids, 1):
-            entry = tk.Entry(self.rows, font=FONTS["body"], fg=TEXT, bg=BG, relief="flat",
-                             highlightthickness=1, highlightbackground=BORDER,
-                             highlightcolor=ACCENT, width=18, insertbackground=TEXT)
-            entry.insert(0, app._speaker_name(spk))
-            entry.grid(row=r, column=0, sticky="w", padx=(0, 10), pady=3, ipady=2)
-            entry.bind("<Return>", lambda e, s=spk: app.rename_speaker(s, e.widget.get()))
-            entry.bind("<FocusOut>", lambda e, s=spk: app.rename_speaker(s, e.widget.get()))
-            self._entries[spk] = entry
-            tk.Label(self.rows, text=fmt_time(talk[spk]), font=FONTS["mono"], fg=TEXT2,
-                     bg=BG).grid(row=r, column=1, sticky="w", padx=(0, 10))
-            play = ttk.Button(self.rows, text="▶", width=3)
-            play.configure(command=lambda b=play, s=spk: self._toggle_sample(b, s))
-            play.grid(row=r, column=2, padx=(0, 10))
-            Tooltip(play, "Listen", "Plays a few seconds of this speaker.")
-            merge = ttk.Combobox(self.rows, style="Subtle.TCombobox", state="readonly",
-                                 font=FONTS["dropdown"], width=20)
-            # The list is filled when it opens, so it always shows the current names.
-            merge.configure(postcommand=lambda m=merge, s=spk: m.configure(values=[
-                f"Merge into {app._speaker_name(o)}" for o in app._speaker_ids() if o != s]))
-            merge.set("Merge into…")
-            if len(ids) < 2:
-                merge.configure(state="disabled")
-            merge.bind("<<ComboboxSelected>>", lambda e, s=spk: self._merge(e, s))
-            merge.grid(row=r, column=3, sticky="w")
-        busy = app.busy
-        self.undo_btn.configure(state="normal" if app._merge_undo and not busy else "disabled")
-        self.again_btn.configure(state="disabled" if busy or app.audio is None else "normal")
-
-    def _merge(self, event, src):
-        others = [o for o in self.app._speaker_ids() if o != src]
-        index = event.widget.current()
-        if 0 <= index < len(others):
-            self.app.merge_speakers(src, others[index])
-
-    def _toggle_sample(self, button, spk):
-        playing = self._sample is not None and self._sample[1] == spk
-        self._stop_sample()
-        if playing or self.app.audio is None:
-            return
-        # A few seconds from this speaker's longest stretch of talking
-        best, run = None, None
-        for p in self.app.pieces:
-            if p.get("speaker") == spk:
-                run = [run[0], p["end"]] if run else [p["start"], p["end"]]
-                if best is None or run[1] - run[0] > best[1] - best[0]:
-                    best = list(run)
-            else:
-                run = None
-        if best is None:
-            return
-        start, end = best[0], min(best[1], best[0] + 6.0)
-        self.app._stop_playback()
-        self.player.load(self.app.audio.slice(start, end), start)
-        try:
-            self.player.play(start, end)
-        except Exception as exc:
-            messagebox.showerror("diemut", "diemut couldn't play the audio. Check that speakers "
-                                           f"or headphones are connected.\n\nDetails: {exc}",
-                                 parent=self.win)
-            return
-        self._sample = (button, spk)
-        button.configure(text="‖")
-        self._watch_sample()
-
-    def _watch_sample(self):
-        if self._sample is None:
-            return
-        if not self.player.is_playing:
-            self._stop_sample()
-            return
-        self.win.after(100, self._watch_sample)
-
-    def _stop_sample(self):
-        self.player.pause()
-        if self._sample is not None:
-            try:
-                self._sample[0].configure(text="▶")
-            except tk.TclError:
-                pass     # the row was rebuilt
-            self._sample = None
-
-    def find_again(self):
-        app = self.app
-        label = self.count_box.get()
-        n = next(c for c in SPEAKER_COUNTS if app._count_label(c) == label)
-        if not messagebox.askyesno(
-                "Find speakers again?",
-                "diemut will label the speakers again from the audio. This replaces the current "
-                "speaker labels, including names, merges and speakers you changed. Your text "
-                "corrections are kept.\n\nFind speakers again?", parent=self.win):
-            return
-        self.close()
-        app.refind_speakers(n)
-
-    def close(self):
-        self._stop_sample()
-        self.player.close()
-        self.win.destroy()
-        self.app._speakers_win = None
-
-
-class App:
+class App(EditorMixin, ParagraphsMixin):
     def __init__(self, root):
         self.root = root
         root.title("diemut")
         root.configure(bg=BG)
         self._set_icon()
-        self._setup_style()
+        setup_style(root)
 
         self.ui_q = queue.Queue()
         self.session_id = 0
@@ -295,14 +55,19 @@ class App:
         self.mini_active = False
         self._pending = False
         self._play_job = None
+        self._shown_playing = False  # what the Play / Pause button shows
         self._loop = False
+        self._mode = None           # None, "merge" or "split": changed only by _set_mode
+        self._merge_range = None    # (first, last) paragraphs checked in merge mode
+        self._merge_anchor = None   # the paragraph clicked last, where Shift+click counts from
+        self._press = None          # [paragraph, dragged?, Shift?] while the mouse is down
         self._region = None        # (start, end) seconds selected on the audio bar or as words
         self._region_src = None    # "bar" or "text"
         self._drag = None
         self._wave_span = (0.0, 0.0)
         self._wave_cols = None     # the waveform's columns, as last drawn
         self._spk_map = {}
-        self.reset_transcript()
+        self._clear_transcript()
 
         self.container = tk.Frame(root, bg=BG)
         self.container.pack(fill="both", expand=True)
@@ -369,90 +134,6 @@ class App:
             self._hicons = icons   # keep the handles alive while the window uses them
         except Exception:
             pass   # Tk's own (blurrier) icon stays in place
-
-    # ------------------------------------------------------------ style --
-    def _setup_style(self):
-        family = tkfont.nametofont("TkDefaultFont").actual("family")
-        if WINDOWS:
-            mono = "Consolas"
-        elif sys.platform == "darwin":
-            mono = "Menlo"
-        else:
-            mono = tkfont.nametofont("TkFixedFont").actual("family")
-
-        def font(size, weight="normal", fam=family):
-            return tkfont.Font(family=fam, size=size, weight=weight)
-
-        FONTS.update(
-            body=font(10), label=font(10), small=font(9), small_bold=font(9, "bold"),
-            dropdown=font(9), title=font(20, "bold"), card_title=font(12, "bold"),
-            icon=font(22), mono=font(9, fam=mono), tag=font(9, fam=mono),
-            card_title_mono=font(12, "bold", fam=mono),
-            text=font(11), speaker=font(11, "bold"), header=font(10, "bold"),
-        )
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(".", background=BG, foreground=TEXT, font=FONTS["body"])
-        style.configure("TButton", background=SURFACE, foreground=TEXT, padding=(10, 3), width=0,
-                        bordercolor=BORDER_STRONG, lightcolor=SURFACE, darkcolor=SURFACE,
-                        focuscolor=SURFACE)
-        style.map("TButton",
-                  background=[("disabled", BG), ("pressed", BORDER), ("active", HOVER)],
-                  foreground=[("disabled", MUTED)],
-                  bordercolor=[("disabled", BORDER)],
-                  lightcolor=[("active", HOVER)], darkcolor=[("active", HOVER)])
-        # A button that stays pressed while it's on (Loop in the correction panel)
-        style.map("Toggle.TButton",
-                  background=[("disabled", BG), ("pressed", BORDER), ("selected", BORDER),
-                              ("active", HOVER)],
-                  foreground=[("disabled", MUTED), ("selected", TEXT)],
-                  bordercolor=[("disabled", BORDER), ("selected", ACCENT)],
-                  lightcolor=[("selected", BORDER), ("active", HOVER)],
-                  darkcolor=[("selected", BORDER), ("active", HOVER)])
-        # Accent buttons (Home, Start, Cancel, Clear, Mini view…): accent fill, darker on hover
-        hover, pressed = _shade(ACCENT, 0.9), _shade(ACCENT, 0.8)
-        style.configure("Accent.TButton", background=ACCENT, foreground=TEXT,
-                        bordercolor=_shade(ACCENT, 0.75), lightcolor=ACCENT, darkcolor=ACCENT,
-                        focuscolor=ACCENT)
-        style.map("Accent.TButton",
-                  background=[("disabled", BG), ("pressed", pressed), ("active", hover)],
-                  foreground=[("disabled", MUTED)],
-                  bordercolor=[("disabled", BORDER)],
-                  lightcolor=[("disabled", BG), ("pressed", pressed), ("active", hover)],
-                  darkcolor=[("disabled", BG), ("pressed", pressed), ("active", hover)])
-        style.configure("TRadiobutton", background=BG, foreground=TEXT, focuscolor=BG,
-                        indicatorbackground=BG, indicatorforeground=ACCENT)
-        style.map("TRadiobutton", background=[("active", BG)],
-                  foreground=[("disabled", MUTED)])
-        style.configure("TCheckbutton", background=BG, foreground=TEXT2, focuscolor=BG,
-                        indicatorbackground=BG, indicatorforeground=ACCENT)
-        style.map("TCheckbutton", background=[("active", BG)])
-        style.configure("Subtle.TCombobox", fieldbackground=BG, background=BG,
-                        foreground=MUTED, bordercolor=BORDER, lightcolor=BG, darkcolor=BG,
-                        arrowcolor=MUTED, padding=(6, 2))
-        style.map("Subtle.TCombobox",
-                  fieldbackground=[("readonly", "focus", BG), ("readonly", BG)],
-                  foreground=[("readonly", "focus", MUTED), ("readonly", MUTED)],
-                  selectbackground=[("readonly", "focus", BG), ("readonly", BG)],
-                  selectforeground=[("readonly", "focus", MUTED), ("readonly", MUTED)],
-                  background=[("readonly", "focus", BG), ("readonly", BG), ("active", BG)],
-                  bordercolor=[("focus", BORDER_STRONG), ("hover", BORDER_STRONG)])
-        style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor=SURFACE,
-                        bordercolor=BORDER, lightcolor=ACCENT, darkcolor=ACCENT)
-        style.configure("Vertical.TScrollbar", background=SURFACE, troughcolor=BG,
-                        bordercolor=BG, arrowcolor=MUTED, lightcolor=SURFACE, darkcolor=SURFACE)
-        # The list that opens under a dropdown
-        self.root.option_add("*TCombobox*Listbox.background", BG)
-        self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
-        self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
-        self.root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
-        self.root.option_add("*TCombobox*Listbox.font", FONTS["dropdown"])
-        # Selected text: white on near-black, and just as strong when the box isn't focused
-        for widget in ("Text", "Entry"):
-            self.root.option_add(f"*{widget}.selectBackground", TEXT)
-            self.root.option_add(f"*{widget}.selectForeground", BG)
-            self.root.option_add(f"*{widget}.inactiveSelectBackground", TEXT)
 
     def _tag(self, parent, text, font=None):
         return tk.Label(parent, text=text, font=font or FONTS["tag"], bg=SURFACE, fg=TEXT,
@@ -552,8 +233,8 @@ class App:
         lbl.grid(row=2, column=0, sticky="e", padx=(0, 10), pady=3)
         self.count_box = ttk.Combobox(form, style="Subtle.TCombobox", state="readonly",
                                       font=FONTS["dropdown"], width=40,
-                                      values=[self._count_label(n) for n in SPEAKER_COUNTS])
-        self.count_box.set(self._count_label(None))
+                                      values=[count_label(n) for n in SPEAKER_COUNTS])
+        self.count_box.set(count_label(None))
         self.count_box.grid(row=2, column=1, sticky="w", pady=3)
         self.count_box.bind("<<ComboboxSelected>>", self._on_count)
         for w in (lbl, self.count_box):
@@ -612,14 +293,9 @@ class App:
         self.model_box.selection_clear()
         self._update_note()
 
-    @staticmethod
-    def _count_label(n):
-        return "Not sure (diemut counts them)" if n is None else \
-            f"{n} {'person' if n == 1 else 'people'}"
-
     def _on_count(self, _event=None):
         self.num_speakers = next(n for n in SPEAKER_COUNTS
-                                 if self._count_label(n) == self.count_box.get())
+                                 if count_label(n) == self.count_box.get())
         self.count_box.selection_clear()
 
     def _on_language(self, _event=None):
@@ -681,8 +357,29 @@ class App:
         self.newfile_btn = ttk.Button(self.controls_left, text="New file…", style="Accent.TButton", 
                                       command=self.open_file)
 
-        self.export_btn = ttk.Button(controls, text="Export…", style="Accent.TButton", command=self.open_export)
+        self.export_btn = ttk.Button(controls, text="Export…", style="Accent.TButton", command=lambda: export_dialog(self))
         self.export_btn.pack(side="right")
+        # Merge and split, shown while paragraphs are selected in the transcript
+        # Centred in the row, whatever is on the left and right
+        self.par_tools = tk.Frame(controls, bg=BG)
+        self.par_tools.place(relx=0.5, rely=0, anchor="n")   # top-aligned, like the others
+        self.merge_mode_btn = ttk.Button(self.par_tools, text="Merge", style="Mode.TButton",
+                                         command=self.toggle_merge_mode)
+        Tooltip(self.merge_mode_btn, "Merge",
+                lambda: "Check the paragraphs to merge, then click Merge N paragraphs. Merge "
+                        "again, or Esc, stops." if self._mode == "merge" else
+                        "Merges paragraphs that are next to each other and from the same "
+                        "speaker. Click it, then check the paragraphs.")
+        self.merge_mode_btn.pack(side="left", padx=(0, 6))
+        self.split_btn = ttk.Button(self.par_tools, text="Split", style="Mode.TButton",
+                                    command=self.toggle_split_mode)
+        Tooltip(self.split_btn, "Split",
+                lambda: "Click the word where the new paragraph should start. Split again, or "
+                        "Esc, stops." if self._mode == "split" else
+                        "Click a paragraph in the transcript, then Split to divide it."
+                        if self.sel is None else
+                        "Then click the word where the new paragraph should start.")
+        self.split_btn.pack(side="left")
         self.ts_labels = {"turns": "Each speaker turn", "paragraphs": "Each paragraph",
                           "none": "None"}
         self.ts_mode = "turns"        # remembered between exports
@@ -708,11 +405,21 @@ class App:
         self.text.tag_configure("pending", foreground=MUTED)
         self.text.tag_configure("placeholder", foreground=MUTED)
         self.text.tag_configure("selected", background=TEXT, foreground=BG)
-        self.text.bind("<Button-1>", self._on_text_click)
+        self.text.bind("<Button-1>", self._on_text_press)
+        self.text.bind("<ButtonRelease-1>", self._on_text_release)
+        self.text.bind("<B1-Motion>", self._on_text_drag)
+        self.root.bind("<Escape>", lambda e: self._set_mode(None), add="+")
+        self._sword = file_cursor(self.root, "sword", "crosshair")
+        self._needle = file_cursor(self.root, "needle", "hand2")
+        self.text.tag_configure("check", foreground=MUTED)
+        self.text.tag_configure("checked", foreground=TEXT)
         aqua = self.root.tk.call("tk", "windowingsystem") == "aqua"
         for seq in (("<Button-2>", "<Control-Button-1>") if aqua else ("<Button-3>",)):
             self.text.bind(seq, self._on_text_menu)
         self.par_menu = self._menu(self.root)
+        # In merge mode: floats at the top centre of the transcript, over the text
+        self.merge_sel_btn = ttk.Button(body, text="Merge", style="Accent.TButton",
+                                        command=self.merge_selected)
         self.editor = self._build_editor(screen)
 
         self.clear_btn = ttk.Button(bottom, text="Clear", command=self.clear)
@@ -750,8 +457,7 @@ class App:
             f"{action.capitalize()} anyway?")
 
     def go_home(self):
-        if self.sel is not None:
-            self._commit_open_edit()
+        self._save_edit()
         if self.busy:
             if not messagebox.askyesno("Stop and go back?",
                                        "This will stop the current transcription. Go back anyway?"):
@@ -769,7 +475,7 @@ class App:
         self.progress.pack_forget()
 
     def _on_close(self):
-        self._commit_open_edit()
+        self._save_edit()
         if self.busy and not messagebox.askyesno("Quit diemut?",
                                                  "A transcription is still running. Quit anyway?"):
             return
@@ -789,6 +495,14 @@ class App:
         return lambda kind, payload: self.ui_q.put((sid, kind, payload))
 
     def reset_transcript(self):
+        """Close the panel and windows, and forget the transcript."""
+        self._set_mode(None)
+        self.close_editor(save=False)
+        if self._speakers_win is not None:
+            self._speakers_win.close()
+        self._clear_transcript()
+
+    def _clear_transcript(self):
         self.pieces = []
         self.names = {}
         self.speaker_count = 0
@@ -802,10 +516,6 @@ class App:
         self._r = {"prev": None, "par_len": 0}
         self.audio = None
         self._pars = []
-        if hasattr(self, "editor"):
-            self.close_editor(save=False)
-        if getattr(self, "_speakers_win", None) is not None:
-            self._speakers_win.close()
         self._merge_undo = None
         self.sel = None
 
@@ -869,81 +579,6 @@ class App:
                        activeforeground=TEXT, disabledforeground=MUTED, font=FONTS["body"],
                        relief="flat", bd=1, **options)
 
-    def open_export(self):
-        """A small dialog: what to export, and with which timestamps."""
-        self._commit_open_edit()
-        has_text = bool(self.pieces)
-        audio_ready = (self.mode == "live" and self.live_state in ("idle", "stopped")
-                       and not self.busy and self.audio is not None and bool(self.audio.end))
-        formats = [("txt", "Text (.txt)", has_text), ("vtt", "Subtitles (.vtt)", has_text),
-                   ("docx", "Word (.docx)", has_text)]
-        if self.mode == "live":
-            formats.append(("mp3", "Audio (.mp3)" if audio_ready or self.live_state == "idle"
-                            else "Audio (.mp3), after Stop", audio_ready))
-        available = [k for k, _, ok in formats if ok]
-        if not available:
-            messagebox.showinfo("Nothing to export", "There's no transcript yet.")
-            return
-
-        win = tk.Toplevel(self.root, bg=BG, padx=18, pady=14)
-        win.withdraw()   # shown once it's placed over the main window
-        win.title("Export")
-        win.transient(self.root)
-        win.resizable(False, False)
-        tk.Label(win, text="Export", font=FONTS["header"], fg=TEXT, bg=BG,
-                 anchor="w").pack(fill="x", pady=(0, 8))
-        kind = tk.StringVar(value=self.export_kind if self.export_kind in available
-                            else available[0])
-        for k, label, ok in formats:
-            ttk.Radiobutton(win, text=label, value=k, variable=kind,
-                            state="normal" if ok else "disabled").pack(anchor="w", pady=1)
-
-        ts_row = tk.Frame(win, bg=BG)
-        ts_row.pack(fill="x", pady=(12, 0))
-        tk.Label(ts_row, text="Timestamps", font=FONTS["body"], fg=TEXT2, bg=BG).pack(side="left")
-        ts_box = ttk.Combobox(ts_row, style="Subtle.TCombobox", state="readonly",
-                              font=FONTS["dropdown"], width=18,
-                              values=[self.ts_labels[t] for t in export.TIMESTAMPS])
-        ts_box.set(self.ts_labels[self.ts_mode])
-        ts_box.pack(side="left", padx=(8, 0))
-        ts_note = tk.Label(win, text="", font=FONTS["small"], fg=MUTED, bg=BG, anchor="w",
-                           justify="left", wraplength=int(300 * self._scale))
-        ts_note.pack(fill="x", pady=(4, 0))
-
-        def on_kind(*_):
-            k = kind.get()
-            ts_box.configure(state="readonly" if k in ("txt", "docx") else "disabled")
-            ts_note.configure(text={
-                "txt": "Each speaker turn: one time when the speaker changes (on every "
-                       "paragraph, without speaker labels).",
-                "docx": "Each speaker turn: one time when the speaker changes (on every "
-                        "paragraph, without speaker labels).",
-                "vtt": "Subtitles always have times.",
-                "mp3": "The recording, with paused stretches kept as silence so its times "
-                       "match the transcript.",
-            }[k])
-        kind.trace_add("write", on_kind)
-        on_kind()
-
-        def go(_event=None):
-            self.export_kind = kind.get()
-            self.ts_mode = next(t for t, label in self.ts_labels.items()
-                                if label == ts_box.get())
-            win.destroy()
-            self.export(self.export_kind)
-
-        row = tk.Frame(win, bg=BG)
-        row.pack(fill="x", pady=(14, 0))
-        ttk.Button(row, text="Export…", style="Accent.TButton", command=go).pack(side="right")
-        ttk.Button(row, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 6))
-        win.bind("<Return>", go)
-        win.bind("<Escape>", lambda e: win.destroy())
-        center_over(win, self.root)
-        win.deiconify()
-        win.wait_visibility()
-        win.grab_set()
-        win.focus_set()
-
     # -- mini view --
     def _build_mini(self):
         mini = tk.Frame(self.container, bg=BG, padx=10, pady=8)
@@ -974,9 +609,7 @@ class App:
         """Shrink to a small always-on-top window showing the latest words."""
         if self.mini_active:
             return
-        if self.sel is not None:
-            self._commit_open_edit()
-            self.close_editor(save=False)
+        self._close_editing()
         self._full_geometry = self.root.geometry()
         self._full_minsize = self.root.minsize()
         self.transcript_screen.pack_forget()
@@ -1003,22 +636,28 @@ class App:
         self.text.see("end")
 
     def _update_mini_controls(self):
-        if not self.mini_active:
-            return
-        for w in self.mini_controls.winfo_children():
+        if self.mini_active:
+            self._show_live_buttons(self.mini_controls, self.mini_start, self.mini_pause,
+                                    self.mini_stop)
+            self.mini_dot.itemconfigure(self.mini_dot_id, fill=self._live_dot())
+
+    def _show_live_buttons(self, frame, start, pause, stop):
+        """Start, or Pause/Resume and Stop, for the live state (main window or mini view)."""
+        for w in frame.winfo_children():
             w.pack_forget()
         s = self.live_state
         if s in ("idle", "stopped", "loading"):
-            self.mini_start.configure(state="disabled" if s == "loading" else "normal")
-            self.mini_start.pack(side="left")
+            start.configure(state="disabled" if s == "loading" else "normal")
+            start.pack(side="left")
         else:
-            self.mini_pause.configure(text="Resume" if s == "paused" else "Pause",
-                                      state="disabled" if s == "stopping" else "normal")
-            self.mini_stop.configure(state="disabled" if s == "stopping" else "normal")
-            self.mini_pause.pack(side="left")
-            self.mini_stop.pack(side="left", padx=(6, 0))
-        colors = {"recording": DANGER, "paused": MUTED}
-        self.mini_dot.itemconfigure(self.mini_dot_id, fill=colors.get(s, BORDER_STRONG))
+            pause.configure(text="Resume" if s == "paused" else "Pause",
+                            state="disabled" if s == "stopping" else "normal")
+            stop.configure(state="disabled" if s == "stopping" else "normal")
+            pause.pack(side="left")
+            stop.pack(side="left", padx=(6, 0))
+
+    def _live_dot(self):
+        return {"recording": DANGER, "paused": MUTED}.get(self.live_state, BORDER_STRONG)
 
     def _update_mini_text(self):
         """The newest words; the box is two lines tall, so older ones scroll out of view."""
@@ -1083,19 +722,12 @@ class App:
             if s == "stopped" and self.busy:      # finding speakers in the recording
                 self.cancel_btn.configure(state="normal")
                 self.cancel_btn.pack(side="left")
-            elif s in ("idle", "stopped", "loading"):
-                self.start_btn.pack(side="left")
-                self.start_btn.configure(state="disabled" if s == "loading" else "normal")
+            else:
+                self._show_live_buttons(self.controls_left, self.start_btn, self.pause_btn,
+                                        self.stop_btn)
                 if s == "stopped" and self.pieces and self.audio is not None:
                     self.find_spk_btn.pack(side="left", padx=(6, 0))
-            else:
-                self.pause_btn.configure(text="Resume" if s == "paused" else "Pause",
-                                         state="disabled" if s == "stopping" else "normal")
-                self.stop_btn.configure(state="disabled" if s == "stopping" else "normal")
-                self.pause_btn.pack(side="left")
-                self.stop_btn.pack(side="left", padx=(6, 0))
-            colors = {"recording": DANGER, "paused": MUTED}
-            self.dot.itemconfigure(self.dot_id, fill=colors.get(s, BORDER_STRONG))
+            self.dot.itemconfigure(self.dot_id, fill=self._live_dot())
             self._update_mini_controls()
             titles = {"idle": "Ready", "loading": "Starting…", "recording": "Recording",
                       "paused": "Paused", "stopping": "Stopping…", "stopped": "Stopped"}
@@ -1107,6 +739,7 @@ class App:
             else:
                 self.newfile_btn.pack(side="left")
         self.clear_btn.configure(state="disabled" if self.busy else "normal")
+        self._update_par_tools()
 
     def _update_header_tags(self):
         for w in self.header_tags.winfo_children():
@@ -1145,6 +778,7 @@ class App:
             if placeholder:
                 t.insert("end", placeholder, "placeholder")
             t.configure(state="disabled", cursor=self._text_cursor())
+            self._update_par_tools()
             return
         first_line = True
         use_speakers = self.speaker_count > 1
@@ -1179,6 +813,9 @@ class App:
             self._r = {"prev": self.pieces[-1],
                        "par_len": len(t.get("end-1c linestart", "end-1c"))}
         t.configure(state="disabled", cursor=self._text_cursor())
+        self._show_open_paragraph(scroll=False)
+        self._draw_checks()
+        self._update_par_tools()
 
     def _append_piece(self, piece):
         first = not self.pieces
@@ -1261,9 +898,8 @@ class App:
 
     def merge_speakers(self, src, dst):
         """Give all of speaker src's words to speaker dst."""
-        if self.sel is not None:
-            self._commit_open_edit()
-            self.close_editor(save=False)
+        self._set_mode(None)
+        self._close_editing()
         self._merge_undo = ([p.get("speaker") for p in self.pieces], dict(self.names))
         message = f"Merged {self._speaker_name(src)} into {self._speaker_name(dst)}."
         for p in self.pieces:
@@ -1275,49 +911,14 @@ class App:
     def undo_merge(self):
         if self._merge_undo is None:
             return
-        if self.sel is not None:
-            self._commit_open_edit()
-            self.close_editor(save=False)
+        self._set_mode(None)
+        self._close_editing()
         ids, self.names = self._merge_undo
         self._merge_undo = None
         if len(ids) == len(self.pieces):   # skip it if a correction changed the words since
             for p, spk in zip(self.pieces, ids):
                 p["speaker"] = spk
         self._speakers_changed("Merge undone.")
-
-    def ask_speaker_count(self, parent, title, message, action):
-        """A small dialog asking how many people speak. Returns (confirmed, count or None)."""
-        win = tk.Toplevel(parent, bg=BG, padx=16, pady=14)
-        win.withdraw()   # shown once it's placed over the main window
-        win.title(title)
-        win.transient(parent)
-        win.resizable(False, False)
-        tk.Label(win, text=message, font=FONTS["body"], fg=TEXT, bg=BG, justify="left",
-                 anchor="w", wraplength=int(380 * self._scale)).pack(fill="x")
-        box = ttk.Combobox(win, style="Subtle.TCombobox", state="readonly",
-                           font=FONTS["dropdown"], width=30,
-                           values=[self._count_label(n) for n in SPEAKER_COUNTS])
-        box.set(self._count_label(None))
-        box.pack(anchor="w", pady=(10, 0))
-        result = {}
-
-        def confirm(_event=None):
-            result["n"] = next(n for n in SPEAKER_COUNTS if self._count_label(n) == box.get())
-            win.destroy()
-
-        row = tk.Frame(win, bg=BG)
-        row.pack(fill="x", pady=(14, 0))
-        ttk.Button(row, text=action, style="Accent.TButton", command=confirm).pack(side="right")
-        ttk.Button(row, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 6))
-        win.bind("<Return>", confirm)
-        win.bind("<Escape>", lambda e: win.destroy())
-        center_over(win, parent)
-        win.deiconify()
-        win.wait_visibility()
-        win.grab_set()
-        box.focus_set()
-        parent.wait_window(win)
-        return "n" in result, result.get("n")
 
     def find_live_speakers(self):
         """Label speakers in a stopped live recording, after asking how many there are."""
@@ -1326,9 +927,8 @@ class App:
         message = ("How many people speak in this recording? If you're not sure, "
                    "diemut counts them.")
         if self.speaker_count:
-            message += ("\n\nThis replaces the current speaker labels, including names and "
-                        "merges. Your text corrections are kept.")
-        ok, n = self.ask_speaker_count(self.root, "Find speakers", message, "Find speakers")
+            message += "\n\n" + REPLACES_LABELS
+        ok, n = ask_speaker_count(self.root, "Find speakers", message, "Find speakers")
         if ok:
             self.refind_speakers(n)
 
@@ -1336,9 +936,8 @@ class App:
         """Run speaker labelling again; the text and its corrections are kept."""
         if self.busy or self.audio is None or not self.pieces:
             return
-        if self.sel is not None:
-            self._commit_open_edit()
-            self.close_editor(save=False)
+        self._set_mode(None)
+        self._close_editing()
         emit = self._new_session()
         self.busy = True
         self.stage = None
@@ -1391,6 +990,7 @@ class App:
             self.pieces = []
             self._render_all("")
         elif kind == "speakers":
+            self._set_mode(None)
             ids, count = payload
             for piece, spk in zip(self.pieces, ids):
                 piece["speaker"] = spk
@@ -1431,584 +1031,9 @@ class App:
             hint = "Something went wrong."
         return f"{hint}\n\nDetails: {message}"
 
-    # ----------------------------------------------- listen and correct --
-    def _build_editor(self, screen):
-        scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
-        self._scale = scale
-        ed = tk.Frame(screen, bg=SURFACE, highlightthickness=1,
-                      highlightbackground=BORDER_STRONG, padx=10, pady=8)
-        row = tk.Frame(ed, bg=SURFACE)
-        row.pack(fill="x")
-        self.play_btn = ttk.Button(row, text=PLAY_LABEL, width=7, command=self.toggle_play)
-        self.play_btn.pack(side="left")
-        self.back_btn = ttk.Button(row, text="⟲ 3 s", command=self.skip_back)
-        self.back_btn.pack(side="left", padx=(6, 0))
-        self.loop_btn = ttk.Button(row, text="Loop", style="Toggle.TButton",
-                                   command=self.toggle_loop)
-        self.loop_btn.pack(side="left", padx=(6, 0))
-        self.speed_box = ttk.Combobox(row, style="Subtle.TCombobox", state="readonly",
-                                      font=FONTS["dropdown"], width=5,
-                                      values=[self._speed_label(s) for s in reversed(playback.SPEEDS)])
-        self.speed_box.set(self._speed_label(1.0))
-        self.speed_box.pack(side="left", padx=(6, 0))
-        Tooltip(self.speed_box, "Playback speed",
-                "Faster and slower speeds keep voices at their normal pitch. "
-                "Ctrl+↓ and Ctrl+↑ change it.")
-        self.speed_box.bind("<<ComboboxSelected>>", self._on_speed)
-        self.time_lbl = tk.Label(row, text="", font=FONTS["mono"], fg=TEXT2, bg=SURFACE)
-        self.time_lbl.pack(side="left", padx=(10, 0))
-        self.spk_frame = tk.Frame(row, bg=SURFACE)
-        self.spk_lbl = tk.Label(self.spk_frame, text="Speaker", fg=TEXT2, bg=SURFACE,
-                                font=FONTS["body"])
-        self.spk_lbl.pack(side="left", padx=(0, 6))
-        self.spk_box = ttk.Combobox(self.spk_frame, style="Subtle.TCombobox", state="readonly",
-                                    font=FONTS["dropdown"], width=12)
-        self.spk_box.pack(side="left")
-        self.spk_box.bind("<<ComboboxSelected>>", self._on_speaker_choice)
-        Tooltip(self.spk_box, "Speaker",
-                lambda: "Gives the selected words to this speaker." if self._text_sel()
-                else "Moves this paragraph to another speaker. Select words first to move "
-                     "just those.")
-        ttk.Button(row, text="Done", command=lambda: self.close_editor(save=True)).pack(side="right")
-        ttk.Button(row, text="Next ▶", command=lambda: self._step(1)).pack(side="right", padx=(0, 6))
-        ttk.Button(row, text="◀ Prev", command=lambda: self._step(-1)).pack(side="right", padx=(0, 6))
-
-        # Audio bar: the paragraph's waveform, with a playhead and a selectable stretch
-        self.wave = tk.Canvas(ed, height=int(64 * scale), bg=BG, highlightthickness=1,
-                              highlightbackground=BORDER, cursor="hand2")
-        self.wave.pack(fill="x", pady=(8, 0))
-        self.wave.bind("<Configure>", lambda e: self._draw_wave())
-        self.wave.bind("<ButtonPress-1>", self._wave_press)
-        self.wave.bind("<B1-Motion>", self._wave_drag_to)
-        self.wave.bind("<ButtonRelease-1>", self._wave_release)
-        times = tk.Frame(ed, bg=SURFACE)
-        times.pack(fill="x")
-        self.wave_start_lbl = tk.Label(times, text="", font=FONTS["mono"], fg=TEXT2, bg=SURFACE)
-        self.wave_start_lbl.pack(side="left")
-        self.wave_end_lbl = tk.Label(times, text="", font=FONTS["mono"], fg=TEXT2, bg=SURFACE)
-        self.wave_end_lbl.pack(side="right")
-
-        self.edit_box = tk.Text(ed, height=4, wrap="word", font=FONTS["text"], bg=BG, fg=TEXT,
-                                relief="flat", highlightthickness=1, highlightbackground=BORDER,
-                                highlightcolor=ACCENT, padx=8, pady=6, undo=True,
-                                insertbackground=TEXT, exportselection=False)
-        self.edit_box.pack(fill="x", pady=(4, 4))
-        self.edit_box.tag_configure("linked", background=TEXT, foreground=BG)
-        shortcuts = ["Ctrl+Space plays or pauses (just the selected words, if any)",
-                     "Alt+← back 3 s", "Ctrl+L loop", "Ctrl+↓ / Ctrl+↑ slower / faster",
-                     "Enter splits the paragraph", "Ctrl+Enter saves", "Esc discards changes"]
-        # Non-breaking spaces inside each shortcut, so lines only wrap between them
-        hint = tk.Label(ed, text="  ·  ".join(t.replace(" ", "\u00a0") for t in shortcuts),
-                        font=FONTS["small"], fg=MUTED, bg=SURFACE, anchor="w", justify="left")
-        hint.pack(fill="x")
-        hint.bind("<Configure>", lambda e: hint.configure(wraplength=max(100, e.width)))
-        box = self.edit_box
-        box.bind("<Control-Return>", lambda e: self._key(self._commit_open_edit))
-        box.bind("<Escape>", lambda e: self._key(lambda: self.close_editor(save=False)))
-        box.bind("<Control-space>", lambda e: self._key(self.toggle_play))
-        box.bind("<Alt-Left>", lambda e: self._key(self.skip_back))
-        box.bind("<Control-l>", lambda e: self._key(self.toggle_loop))
-        box.bind("<Control-L>", lambda e: self._key(self.toggle_loop))
-        box.bind("<Control-Down>", lambda e: self._key(lambda: self._change_speed(-1)))
-        box.bind("<Control-Up>", lambda e: self._key(lambda: self._change_speed(1)))
-        box.bind("<<Selection>>", self._on_text_selection)
-        box.bind("<KeyRelease>", lambda e: self._refresh_linked_words(), add="+")
-        return ed
-
-    @staticmethod
-    def _key(action):
-        action()
-        return "break"
-
-    def _text_cursor(self):
-        return "hand2" if (self.pieces and not self.busy) else "arrow"
-
-    def _on_text_click(self, event):
-        if self.busy or not self.pieces:
-            return
-        index = self.text.index(f"@{event.x},{event.y}")
-        for tag in self.text.tag_names(index):
-            if tag.startswith("par:"):
-                self.open_editor(int(tag[4:]))
-                return
-
-    # -- splitting and merging paragraphs --
-    def _on_text_menu(self, event):
-        if self.busy or not self.pieces:
-            return
-        if self.sel is not None:   # save the open correction first: it can shift pieces
-            self._commit_open_edit()
-            self.close_editor(save=False)
-        index = self.text.index(f"@{event.x},{event.y}")
-        k = next((int(tag[4:]) for tag in self.text.tag_names(index) if tag.startswith("par:")),
-                 None)
-        if k is None:
-            return
-        par, menu = self._pars[k], self.par_menu
-        menu.delete(0, "end")
-        split_at = None
-        ranges = self.text.tag_ranges(f"ptext:{k}")
-        if ranges and self.text.compare(index, ">=", ranges[0]):
-            split_at = self._piece_at_offset(par, len(self.text.get(ranges[0], index)))
-        if split_at is not None and split_at > par["i0"]:
-            word = self.pieces[split_at]["text"].strip()
-            menu.add_command(label=f"Split paragraph before “{word}”",
-                             command=lambda: self._mark_paragraph(split_at, "start"))
-        for other, label in ((k - 1, "Merge with paragraph above"),
-                             (k + 1, "Merge with paragraph below")):
-            if self._same_speaker(k, other):
-                first = max(par["i0"], self._pars[other]["i0"])
-                menu.add_command(label=label, command=lambda i=first: self._mark_paragraph(i, "join"))
-        if menu.index("end") is None:
-            menu.add_command(label="Nothing to split or merge here", state="disabled")
-        menu.tk_popup(event.x_root, event.y_root)
-        return "break"
-
-    def _same_speaker(self, k, other):
-        """True if paragraph other is next to paragraph k and has the same speaker."""
-        if not 0 <= other < len(self._pars):
-            return False
-        a, b = sorted((self._pars[k], self._pars[other]), key=lambda par: par["i0"])
-        return a["i1"] == b["i0"] and (self.pieces[a["i0"]].get("speaker")
-                                       == self.pieces[b["i0"]].get("speaker"))
-
-    def _piece_at_offset(self, par, offset):
-        """The piece at a character offset in a paragraph's displayed text."""
-        spaced = " " in par["text"]
-        pos = 0
-        for i in range(par["i0"], par["i1"]):
-            text = self.pieces[i]["text"]
-            pos += len(" ".join(text.split()) if spaced else text.strip()) + (1 if spaced else 0)
-            if offset < pos:
-                return i
-        return par["i1"] - 1
-
-    def _mark_paragraph(self, i, mark):
-        """Start ("start") or stop ("join") a paragraph at piece i."""
-        self.pieces[i]["par"] = mark
-        self.dirty = True
-        self._render_all()
-        self.status_lbl.configure(text="Paragraph split." if mark == "start"
-                                  else "Paragraphs merged.")
-
-    def _par_at_piece(self, i):
-        for k, par in enumerate(self._pars):
-            if par["i0"] <= i < par["i1"]:
-                return k
-        for k, par in enumerate(self._pars):
-            if par["i0"] >= i:
-                return k
-        return len(self._pars) - 1 if self._pars else None
-
-    def open_editor(self, k):
-        if self.sel is not None and k != self.sel and self.editor.winfo_ismapped():
-            target = self._pars[k]["i0"]
-            result = self._apply_edit()
-            if result:
-                edited_i0, delta, _ = result
-                if target > edited_i0:
-                    target += delta
-            k = self._par_at_piece(target)
-            if k is None:
-                self.close_editor(save=False)
-                return
-        self._stop_playback()
-        self.sel = k
-        par = self._pars[k]
-        self.text.tag_remove("selected", "1.0", "end")
-        ranges = self.text.tag_ranges(f"par:{k}")
-        if ranges:
-            self.text.tag_add("selected", ranges[0], ranges[-1])
-            self.text.see(ranges[0])
-        self.edit_box.delete("1.0", "end")
-        self.edit_box.insert("1.0", par["text"])
-        self.edit_box.edit_reset()
-        self._fill_speakers(par["speaker"] if par["speaker"] is not None
-                            else self.pieces[par["i0"]].get("speaker"))
-        self._load_audio(par)
-        if not self.editor.winfo_ismapped():
-            self.editor.pack(side="bottom", fill="x", padx=14, pady=(4, 0), before=self.body)
-        self.edit_box.focus_set()
-        if self._play_job is None:
-            self._play_job = self.root.after(50, self._tick_playback)
-
-    def _fill_speakers(self, current):
-        ids = sorted({p["speaker"] for p in self.pieces if p.get("speaker") is not None})
-        if not ids:
-            self._spk_map = {}
-            self.spk_frame.pack_forget()
-            return
-        labels = [self._speaker_name(i) for i in ids] + ["New speaker"]
-        self._spk_map = dict(zip(labels, ids))
-        self._spk_map["New speaker"] = max(ids) + 1
-        self.spk_box.configure(values=labels)
-        self.spk_box.set(self._speaker_name(current if current is not None else ids[0]))
-        self.spk_lbl.configure(text="Speaker")
-        self.spk_frame.pack(side="left", padx=(16, 0))
-
-    def _apply_edit(self):
-        """Write the editor's text and speaker into the transcript.
-
-        Returns (first piece index, change in piece count, pieces now in the paragraph),
-        or None if nothing changed.
-        """
-        if self.sel is None or self.sel >= len(self._pars):
-            return None
-        par = self._pars[self.sel]
-        i0, i1 = par["i0"], par["i1"]
-        old = self.pieces[i0:i1]
-        # Each line typed in the box (Enter) becomes its own paragraph.
-        lines = (" ".join(line.split()) for line in self.edit_box.get("1.0", "end-1c").split("\n"))
-        new_text = "\n".join(line for line in lines if line)
-        chosen = self._spk_map.get(self.spk_box.get()) if self._spk_map else None
-        old_spk = old[0].get("speaker")
-        text_changed = new_text != par["text"]
-        speaker_changed = chosen is not None and chosen != old_spk
-        if not text_changed and not speaker_changed:
-            return None
-        if text_changed:
-            # Unchanged words keep their times; corrected ones fill the gaps around them.
-            new = timing.retime(old, new_text)
-        else:
-            new = [dict(p) for p in old]
-        if speaker_changed:
-            for p in new:
-                p["speaker"] = chosen
-        self.pieces[i0:i1] = new
-        ids = {p["speaker"] for p in self.pieces if p.get("speaker") is not None}
-        if ids:
-            self.speaker_count = len(ids)
-        self.dirty = True
-        self._render_all()
-        self._update_header_tags()
-        self.status_lbl.configure(text="Correction saved." if new else "Paragraph removed.")
-        return i0, len(new) - (i1 - i0), len(new)
-
-    def _commit_open_edit(self):
-        """Save the open paragraph and keep editing it."""
-        if self.sel is None:
-            return
-        i0 = self._pars[self.sel]["i0"]
-        result = self._apply_edit()
-        if result is None:
-            return
-        self.sel = None
-        k = self._par_at_piece(i0)
-        if k is None or result[2] == 0:
-            self.close_editor(save=False)
-        else:
-            self.open_editor(k)
-
-    def _step(self, direction):
-        if self.sel is None:
-            return
-        i0 = self._pars[self.sel]["i0"]
-        result = self._apply_edit()
-        current = self._par_at_piece(i0)
-        if current is None:
-            self.close_editor(save=False)
-            return
-        removed = result is not None and result[2] == 0
-        if removed:
-            target = current if direction > 0 else current - 1
-        else:
-            target = current + direction
-        target = max(0, min(len(self._pars) - 1, target))
-        self.sel = None
-        self.open_editor(target)
-
-    def close_editor(self, save=True):
-        if save:
-            self._apply_edit()
-        self.player.close()
-        if self._play_job is not None:
-            self.root.after_cancel(self._play_job)
-            self._play_job = None
-        self.sel = None
-        self.text.tag_remove("selected", "1.0", "end")
-        self.editor.pack_forget()
-
-    # ---------------------------------------------------- audio review --
-    @staticmethod
-    def _speed_label(speed):
-        return f"{speed:g}×"
-
-    @staticmethod
-    def _tenths(seconds):
-        return fmt_time(seconds, with_ms=True)[:-2]   # HH:MM:SS.s
-
-    def _load_audio(self, par):
-        """Give the player and the audio bar the open paragraph, with 0.5 s either side."""
-        t0 = max(0.0, par["start"] - 0.5)
-        t1 = par["end"] + 0.5
-        if self.mode == "file" and self.duration:
-            t1 = min(t1, max(self.duration, par["end"]))
-        audio = self.audio.slice(t0, t1) if self.audio is not None else np.zeros(0, np.float32)
-        self.player.load(audio, t0)
-        self._wave_span = (t0, t1)
-        self._region, self._region_src = None, None
-        self.edit_box.tag_remove("linked", "1.0", "end")
-        state = "normal" if len(audio) else "disabled"
-        for w in (self.play_btn, self.back_btn, self.loop_btn):
-            w.configure(state=state)
-        self.speed_box.configure(state="readonly" if len(audio) else "disabled")
-        self.wave_start_lbl.configure(text=self._tenths(t0))
-        self.wave_end_lbl.configure(text=self._tenths(t1))
-        self.time_lbl.configure(text=self._tenths(t0))
-        self._draw_wave()
-
-    def toggle_play(self):
-        if self.player.is_playing:
-            self._stop_playback()
-            return
-        if self.sel is None or not len(self.player.source):
-            return
-        a, b = self._region or self._wave_span
-        pos = self.player.position
-        # Resume from the playhead if it's inside what will play; otherwise start over.
-        self._play(pos if a <= pos < b - 0.05 else a, b)
-
-    def _play(self, start, end):
-        loop_from = (self._region or self._wave_span)[0] if self._loop else None
-        try:
-            self.player.play(start, end, loop_from)
-        except Exception as exc:
-            self.player.close()
-            messagebox.showerror("diemut", "diemut couldn't play the audio. Check that speakers "
-                                           f"or headphones are connected.\n\nDetails: {exc}")
-            return
-        self._show_playing()
-
-    def _stop_playback(self):
-        """Pause, keeping the playhead where it is."""
-        self.player.pause()
-        self._show_playing()
-
-    def _show_playing(self):
-        playing = self.player.is_playing
-        self.play_btn.configure(text=PAUSE_LABEL if playing else PLAY_LABEL)
-
-    def skip_back(self):
-        if self.sel is None or not len(self.player.source):
-            return
-        t = max(self._wave_span[0], self.player.position - 3.0)
-        if self.player.is_playing:
-            self.player.seek(t)
-        else:
-            a, b = self._region or self._wave_span
-            self._play(t, b if t < b else self._wave_span[1])
-
-    def toggle_loop(self):
-        if self.sel is None or not len(self.player.source):
-            return
-        self._loop = not self._loop
-        self.loop_btn.state(["selected"] if self._loop else ["!selected"])
-        if self.player.is_playing:
-            self.player.set_loop((self._region or self._wave_span)[0] if self._loop else None)
-
-    def _on_speed(self, _event=None):
-        label = self.speed_box.get()
-        speed = next(s for s in playback.SPEEDS if self._speed_label(s) == label)
-        self.player.set_speed(speed)
-        self.speed_box.selection_clear()
-        self.edit_box.focus_set()
-
-    def _change_speed(self, direction):
-        if self.sel is None or not len(self.player.source):
-            return
-        speeds = playback.SPEEDS
-        i = max(0, min(len(speeds) - 1, speeds.index(self.player.speed) + direction))
-        self.speed_box.set(self._speed_label(speeds[i]))
-        self.player.set_speed(speeds[i])
-
-    def _tick_playback(self):
-        """Move the playhead and time while the panel is open (about every 50 ms)."""
-        if self.sel is not None and self.editor.winfo_ismapped():
-            t = self.player.position
-            self.time_lbl.configure(text=self._tenths(t))
-            self._draw_head(t)
-            if (self.play_btn.cget("text") == PAUSE_LABEL) != self.player.is_playing:
-                self._show_playing()
-        self._play_job = self.root.after(50, self._tick_playback)
-
-    # -- the audio bar --
-    def _wave_x(self, t):
-        b = int(self.wave.cget("highlightthickness"))
-        t0, t1 = self._wave_span
-        frac = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
-        return b + max(0.0, min(1.0, frac)) * (self.wave.winfo_width() - 2 * b)
-
-    def _wave_time(self, x):
-        b = int(self.wave.cget("highlightthickness"))
-        t0, t1 = self._wave_span
-        frac = (x - b) / max(1, self.wave.winfo_width() - 2 * b)
-        return t0 + max(0.0, min(1.0, frac)) * (t1 - t0)
-
-    def _draw_wave(self):
-        c = self.wave
-        c.delete("all")
-        w, h = c.winfo_width(), c.winfo_height()
-        b = int(c.cget("highlightthickness"))
-        if w < 4 or self.sel is None:
-            return
-        c.create_rectangle(0, 0, 0, 0, fill=TEXT, outline="", state="hidden", tags="region")
-        x = self.player.source
-        mid = h / 2
-        self._wave_cols = None
-        if len(x):
-            cols = max(1, min(w - 2 * b, len(x)))
-            idx = np.linspace(0, len(x), cols, endpoint=False).astype(int)
-            hi, lo = np.maximum.reduceat(x, idx), np.minimum.reduceat(x, idx)
-            amp = (mid - b - 2) / max(float(np.abs(x).max()), 0.05)
-            xs = b + np.arange(cols) * (w - 2 * b) / cols
-            top = mid - np.maximum(hi * amp, 0.5)
-            bottom = mid - np.minimum(lo * amp, -0.5)
-            points = np.concatenate((np.column_stack((xs, top)),
-                                     np.column_stack((xs[::-1], bottom[::-1])))).ravel()
-            c.create_polygon(*points.tolist(), fill=MUTED, outline=MUTED)
-            self._wave_cols = (xs, top, bottom)   # for the white copy over a selected stretch
-        c.create_line(0, 0, 0, 0, fill=DANGER, width=max(2, int(2 * self._scale)), tags="head")
-        self._draw_region()
-        self._draw_head(self.player.position)
-
-    def _draw_head(self, t):
-        x = self._wave_x(t)
-        self.wave.coords("head", x, 0, x, self.wave.winfo_height())
-
-    def _draw_region(self):
-        """The selected stretch: near-black, with its part of the waveform drawn in white."""
-        c = self.wave
-        c.delete("region_wave")
-        if self._region is None:
-            c.itemconfigure("region", state="hidden")
-            return
-        xa, xb = (self._wave_x(t) for t in self._region)
-        c.coords("region", xa, 0, xb, c.winfo_height())
-        c.itemconfigure("region", state="normal")
-        if self._wave_cols is not None:
-            xs, top, bottom = self._wave_cols
-            keep = (xs >= xa) & (xs <= xb)
-            if keep.sum() >= 2:
-                xs, top, bottom = xs[keep], top[keep], bottom[keep]
-                points = np.concatenate((np.column_stack((xs, top)),
-                                         np.column_stack((xs[::-1], bottom[::-1])))).ravel()
-                c.create_polygon(*points.tolist(), fill=BG, outline=BG, tags="region_wave")
-        c.tag_raise("head")
-
-    def _set_region(self, region, source):
-        self._region, self._region_src = region, (source if region else None)
-        self._draw_region()
-        if self.player.is_playing and self._loop:
-            self.player.set_loop((region or self._wave_span)[0])
-
-    def _wave_press(self, event):
-        if self.sel is None or not len(self.player.source):
-            return
-        self._drag = (event.x, self._wave_time(event.x), False)
-
-    def _wave_drag_to(self, event):
-        if self._drag is None:
-            return
-        x0, t0, moved = self._drag
-        if not moved and abs(event.x - x0) < 4 * self._scale:
-            return
-        self._drag = (x0, t0, True)
-        if not moved:
-            self.edit_box.tag_remove("sel", "1.0", "end")
-        t = self._wave_time(event.x)
-        self._set_region((min(t0, t), max(t0, t)), "bar")
-        self._refresh_linked_words()
-
-    def _wave_release(self, event):
-        if self._drag is None:
-            return
-        _, t0, moved = self._drag
-        self._drag = None
-        self.edit_box.focus_set()
-        if moved and self._region and self._region[1] - self._region[0] > 0.05:
-            self._play(*self._region)
-            return
-        # A click: clear any selection and play from there.
-        self.edit_box.tag_remove("sel", "1.0", "end")
-        self.edit_box.tag_remove("linked", "1.0", "end")
-        self._set_region(None, None)
-        self.player.seek(t0)
-        self._play(t0, self._wave_span[1])
-
-    # -- linking the edit box and the audio bar --
-    def _word_spans(self):
-        par = self._pars[self.sel]
-        return timing.timed_spans(self.pieces[par["i0"]:par["i1"]],
-                                  self.edit_box.get("1.0", "end-1c"))
-
-    def _on_text_selection(self, _event=None):
-        if self.sel is None:
-            return
-        box = self.edit_box
-        selected = self._text_sel()
-        self.spk_lbl.configure(text="Selection" if selected else "Speaker")
-        if not selected:
-            if self._region_src == "text":
-                self._set_region(None, None)
-            return
-        a, b = selected
-        words = [w for w in self._word_spans() if w[1] > a and w[0] < b]
-        box.tag_remove("linked", "1.0", "end")
-        if not words:
-            self._set_region(None, None)
-            return
-        t0, t1 = self._wave_span
-        start = max(t0, min(w[2] for w in words) - 0.5)
-        end = min(t1, max(w[3] for w in words) + 0.5)
-        self._set_region((start, end), "text")
-
-    def _text_sel(self):
-        """The edit box's selection as character offsets (start, end), or None."""
-        box = self.edit_box
-        try:
-            a = len(box.get("1.0", box.index("sel.first")))
-            b = len(box.get("1.0", box.index("sel.last")))
-        except tk.TclError:
-            return None
-        return (a, b) if b > a else None
-
-    def _on_speaker_choice(self, _event=None):
-        """With words selected, give just those words to the chosen speaker."""
-        self.spk_box.selection_clear()
-        selected = self._text_sel()
-        chosen = self._spk_map.get(self.spk_box.get())
-        if self.sel is None or not selected or chosen is None:
-            return
-        par = self._pars[self.sel]
-        i0, i1 = par["i0"], par["i1"]
-        spans = timing.retime_spans(self.pieces[i0:i1], self.edit_box.get("1.0", "end-1c"))
-        a, b = selected
-        for piece, c0, c1 in spans:
-            if c1 > a and c0 < b:
-                piece["speaker"] = chosen
-        self.pieces[i0:i1] = [piece for piece, _, _ in spans]
-        self.sel = None
-        self._speakers_changed(f"Gave the selected words to {self._speaker_name(chosen)}.")
-        k = self._par_at_piece(i0)
-        if k is not None:
-            self.open_editor(k)
-
-    def _refresh_linked_words(self):
-        """Highlight the words under the stretch selected on the audio bar."""
-        if self.sel is None:
-            return
-        box = self.edit_box
-        box.tag_remove("linked", "1.0", "end")
-        if self._region_src != "bar":
-            return
-        a, b = self._region
-        words = [(c0, c1) for c0, c1, s, e in self._word_spans() if s < b and e > a]
-        if words:   # one span, so the spaces between the words are highlighted too
-            box.tag_add("linked", f"1.0 + {words[0][0]} chars", f"1.0 + {words[-1][1]} chars")
-
     # ----------------------------------------------------------- export --
     def export(self, kind):
-        self._commit_open_edit()
+        self._save_edit()
         if kind == "mp3":
             if self.audio is None or not self.audio.end:
                 messagebox.showinfo("Nothing to save", "There's no recording yet.")
