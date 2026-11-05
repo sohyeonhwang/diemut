@@ -8,6 +8,7 @@ the Merge button, and the correction panel's methods.
 import bisect
 
 from . import fillers
+from .theme import BG, TEXT, mix
 
 
 class ParagraphsMixin:
@@ -20,14 +21,15 @@ class ParagraphsMixin:
 
     # -- clicks in the transcript --
     def _par_at(self, event):
-        """The paragraph under the mouse in the transcript (its check box counts), or None."""
+        """The paragraph under the mouse in the transcript, or None."""
         index = self.text.index(f"@{event.x},{event.y}")
         for tag in self.text.tag_names(index):
-            if tag.startswith(("par:", "check:")):
+            if tag.startswith("par:"):
                 return int(tag.split(":")[1])
         return None
 
     def _on_text_press(self, event):
+        self._end_flash()
         if self.busy or not self.pieces:
             return None
         k = self._par_at(event)
@@ -91,42 +93,53 @@ class ParagraphsMixin:
                   "same speaker. Shift+click checks a run. Cancel or Esc stops.")
 
     def _set_mode(self, mode):
-        """Turn merge mode on ("merge") or off (None)."""
+        """Turn merge mode on ("merge") or off (None). The correction panel stays where it
+        is, greyed out while merging."""
         if mode == self._mode:
             return
         self._mode = mode
         self._merge_range = self._merge_anchor = None
         self._press = None
-        if mode == "merge":
-            self._draw_checks()
-        else:
-            self._render_all()      # without the boxes: much faster than deleting each one
+        if mode == "merge" and self.sel is not None:
+            self._stop_playback()
+            self._clear_play_region()
+            self.root.focus_set()       # so the panel's shortcuts don't work while merging
+        self._enable_panel(mode != "merge")
+        self._draw_merge()
+        self._show_open_paragraph(scroll=False)    # hidden while merging, back afterwards
         self.text.configure(cursor=self._text_cursor())
         self._update_par_tools()
         self.status_lbl.configure(text=self.MERGE_HINT if mode == "merge" else "")
 
     def toggle_merge_mode(self):
+        """Merge, or Cancel while merging. The paragraphs selected in the transcript (by
+        dragging over them) start out checked; with none, the open paragraph does."""
         if self._mode == "merge":
             self._set_mode(None)
             return
-        self._set_mode(None)
-        i0 = self._close_editing()
+        # Note the pieces first: saving the open correction can renumber paragraphs
+        t, picked = self.text, None
+        if t.tag_ranges("sel"):
+            touched = [par["i0"] for k, par in enumerate(self._pars)
+                       if (r := t.tag_ranges(f"par:{k}")) and t.compare(r[0], "<", "sel.last")
+                       and t.compare(r[-1], ">", "sel.first")]
+            picked = (touched[0], touched[-1]) if touched else None
+            t.tag_remove("sel", "1.0", "end")
+        i0 = self._save_edit()
+        if picked is None and i0 is not None:
+            picked = (i0, i0)
         self._set_mode("merge")
-        if i0 is not None:      # start from the paragraph that was open
-            k = self._par_at_piece(i0)
-            self._set_merge_range((k, k), k)
+        if picked is not None:
+            a, b = (self._par_at_piece(i) for i in picked)
+            self._check_run(a, b)      # stops at a speaker change, and says so
 
     def _mergeable(self, a, b):
         """True if paragraphs a to b are next to each other and all the same speaker."""
         return all(self._same_speaker(k, k + 1) for k in range(a, b))
 
     def _set_merge_range(self, new, anchor):
-        old = self._merge_range
         self._merge_range, self._merge_anchor = new, anchor
-        inside = lambda r, k: r is not None and r[0] <= k <= r[1]
-        changed = set(range(old[0], old[1] + 1) if old else ()) | \
-            set(range(new[0], new[1] + 1) if new else ())
-        self._draw_checks([k for k in changed if inside(old, k) != inside(new, k)])
+        self._draw_merge()
         self._update_par_tools()
         n = new[1] - new[0] + 1 if new else 0
         self.status_lbl.configure(text=f"{n} paragraph{'' if n == 1 else 's'} checked." if n
@@ -181,27 +194,17 @@ class ParagraphsMixin:
                 new = (min(a, k), max(b, k))
         self._set_merge_range(new, k)
 
-    def _draw_checks(self, only=None):
-        """In merge mode, a ☐ / ☑ in front of each paragraph: drawn for all of them on a
-        transcript that has none yet (after _render_all, or entering merge mode), or with
-        only, redrawn for just those paragraphs. Deleting many small stretches of a Tk text
-        is slow on long transcripts, so the boxes are never all removed one by one."""
-        if self._mode != "merge":
-            return
+    def _draw_merge(self):
+        """In merge mode, the checked paragraphs are white on black, like a selection. Only
+        tags change, so the text doesn't move."""
         t = self.text
-        t.configure(state="normal")
-        a, b = self._merge_range or (-1, -2)
-        for k in range(len(self._pars)) if only is None else only:
-            old = t.tag_ranges(f"check:{k}")
-            if old:
-                t.delete(*old)
-            at = t.tag_ranges(f"par:{k}")
-            if at:
-                checked = a <= k <= b
-                t.insert(at[0], ("☑" if checked else "☐") + " ",
-                         # "para": a line's spacing comes from its first character
-                         ("check", f"check:{k}", "checked" if checked else "unchecked", "para"))
-        t.configure(state="disabled")
+        t.tag_remove("merging", "1.0", "end")
+        if self._mode == "merge" and self._merge_range:
+            a, b = self._merge_range
+            for k in range(a, b + 1):
+                ranges = t.tag_ranges(f"par:{k}")
+                if ranges:
+                    t.tag_add("merging", ranges[0], ranges[-1])
 
     def _update_par_tools(self):
         """The centred row: Merge (faded with only one paragraph), or in merge mode,
@@ -231,23 +234,100 @@ class ParagraphsMixin:
             return
         marks = [(self._pars[k]["i0"], "join") for k in range(a + 1, b + 1)]
         keep = self._pars[a]["i0"]
+        was_open = self.sel is not None
         self._set_mode(None)
-        self._apply_marks(marks, keep, f"{b - a + 1} paragraphs merged.")
+        self._apply_marks(marks, keep, f"{b - a + 1} paragraphs merged.", reopen=was_open)
 
-    def _apply_marks(self, marks, keep, status):
-        """Split or merge paragraphs: set "par" marks on pieces, then open the paragraph
-        holding piece keep. Any open correction must be saved first."""
+    def _apply_marks(self, marks, keep, status, reopen=True):
+        """Split or merge paragraphs: set "par" marks on pieces, then (with reopen) open the
+        paragraph holding piece keep. Any open correction must be saved first."""
         splits = all(mark == "start" for _, mark in marks)
         self._checkpoint("paragraph split" if splits else "paragraph merge")
         for i, mark in marks:
             self.pieces[i]["par"] = mark
         self.dirty = True
         self.sel = None   # paragraph numbers change, so don't let open_editor save into one
-        self._render_all()
+        self._render_all(anchor=self._view_anchor(keep))     # keep's paragraph stays put
         k = self._par_at_piece(keep)
-        if k is not None:
+        if k is not None and reopen:
             self.open_editor(k)
+        if k is not None:       # the paragraphs that changed: one merged, or both halves
+            self._flash(k, self._par_at_piece(max(i for i, _ in marks)))
         self.status_lbl.configure(text=status)
+
+    # -- keeping the view still, and showing what just changed --
+    # A merge's paragraphs are already white on black while checked: they stay that way
+    FLASH_HOLD_MS = 500       # for this long after the merge…
+    FLASH_STEPS, FLASH_STEP_MS = 8, 60     # …then faded back in these steps
+
+    def _flash(self, k0, k1):
+        """Show paragraphs k0 to k1 white on black for a moment, then fade them back."""
+        t = self.text
+        self._end_flash()
+        for k in range(k0, k1 + 1):
+            ranges = t.tag_ranges(f"par:{k}")
+            if ranges:
+                t.tag_add("flash", ranges[0], ranges[-1])
+
+        def step(n):
+            if n > self.FLASH_STEPS:
+                self._end_flash()
+                return
+            f = n / self.FLASH_STEPS
+            t.tag_configure("flash", background=mix(TEXT, BG, f), foreground=mix(BG, TEXT, f))
+            self._flash_job = self.root.after(self.FLASH_STEP_MS, step, n + 1)
+
+        t.tag_configure("flash", background=TEXT, foreground=BG)
+        self._flash_job = self.root.after(self.FLASH_HOLD_MS, step, 1)
+
+    def _end_flash(self):
+        if self._flash_job is not None:
+            self.root.after_cancel(self._flash_job)
+            self._flash_job = None
+        self.text.tag_remove("flash", "1.0", "end")
+
+    def _piece_index(self, i):
+        """Where piece i starts in the transcript (a Text index), or None."""
+        k = self._par_at_piece(i)
+        if k is None:
+            return None
+        ranges = self.text.tag_ranges(f"ptext:{k}")
+        c0 = next((c0 for j, c0, _ in self._piece_spans(self._pars[k]) if j >= i), 0)
+        return f"{ranges[0]} + {c0} chars" if ranges else None
+
+    def _view_anchor(self, i=None):
+        """(piece, pixels from the top of the transcript box, or None if it's off screen),
+        for _restore_view: piece i, or the first word showing at the top."""
+        t = self.text
+        if not self._pars:
+            return None
+        if i is None:
+            top = t.index("@0,0")
+            for k, par in enumerate(self._pars):
+                ranges = t.tag_ranges(f"ptext:{k}")
+                if ranges and t.compare(ranges[-1], ">", top):
+                    inside = t.compare(top, ">", ranges[0])
+                    i = self._piece_at_offset(par, len(t.get(ranges[0], top)) if inside else 0)
+                    break
+            else:
+                return None
+        index = self._piece_index(i)
+        line = t.dlineinfo(index) if index else None
+        return i, (line[1] if line else None)
+
+    def _restore_view(self, anchor):
+        """Scroll so anchor's piece is where it was on screen (or at the top, if it was off
+        screen), after a redraw."""
+        index = self._piece_index(anchor[0]) if anchor else None
+        if index is None:
+            return
+        t = self.text
+        t.yview(index)
+        if anchor[1] is not None:
+            t.update_idletasks()
+            line = t.dlineinfo(index)
+            if line:
+                t.yview_scroll(line[1] - anchor[1], "pixels")
 
     def _on_text_menu(self, event):
         if self.busy or not self.pieces:

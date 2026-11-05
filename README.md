@@ -170,6 +170,8 @@ This *won't* capture audio coming from your laptop/machine, so note that you can
 
 ![The correction panel: a paragraph open below the transcript, with some words selected and the matching stretch highlighted on its waveform](docs/correct.png)
 
+Drag the divider between the transcript and the panel to give either one more room; the text box grows with the panel. `diemut` remembers the size for next time.
+
 - As the audio plays, the word being spoken has a **faint yellow highlight** in the text box. It follows your corrections too: words you haven't changed keep their exact timing, and new or changed words are fitted in between.
 - **▶ / ❚❚** plays or pauses the paragraph from the red playhead. Pausing keeps your place, and ▶ carries on from there. The audio bar shows the stretch's start and end times along its bottom. Hover over a button to see what it does.
 - **Select some words** in the text box and press **Ctrl+Space** to hear just those words, from half a second before to half a second after. The matching stretch is tinted on the audio bar.
@@ -204,10 +206,11 @@ Keyboard shortcuts, which all work while you're typing in the text box:
 Corrections carry over to every export format. Words you didn't change keep their exact timings, and new or corrected words are fitted into the time between the words around them, so subtitle timing stays accurate. Deleting all the text in a paragraph removes it.
 
 **Paragraphs.** Every paragraph shows its start time. `diemut` starts a new paragraph after a pause of more than 1.5 seconds. To change that:
-- **Merge** (in the middle of the row above the transcript): a check box appears in front of each paragraph, and the pointer becomes a needle and thread. Click a paragraph (or its box) to check it, or **drag** over several to check them all. They need to be next to each other and from the same speaker, so a drag stops where the speaker changes. **Shift+click** checks every paragraph from the last one you clicked. If a paragraph was open, it starts out checked. Then click **Merge N paragraphs**, which takes the Merge button's place, next to **Cancel**. **Cancel** or **Esc** stops. (While merging, clicks pick paragraphs rather than selecting text.)
+- **Merge** (in the middle of the row above the transcript): the pointer becomes a needle and thread, and the paragraphs to merge are shown white on black. Click a paragraph to check it, or **drag** over several to check them all. They need to be next to each other and from the same speaker, so a drag stops where the speaker changes. **Shift+click** checks every paragraph from the last one you clicked. If you'd selected text across some paragraphs before pressing Merge, those start out checked; otherwise the open paragraph does. Then click **Merge N paragraphs**, which takes the Merge button's place, next to **Cancel**. **Cancel** or **Esc** stops. The correction panel stays where it is but is greyed out while you merge, so nothing in it can be changed or played until you finish; afterwards it shows the merged paragraph. (While merging, clicks pick paragraphs rather than selecting text.)
 - **Merge** is faded when there's only one paragraph.
 - To **split** a paragraph, open it and press **Enter** in the correction box where the new paragraph should start, or right-click the word in the transcript and choose *Split paragraph before “word”*.
 - You can also **right-click a paragraph** to merge it with the one above or below.
+- After a merge or split, the transcript stays where it was, with the changed paragraph in the same spot on screen, and the merged paragraph stays white on black, as it was while checked, for a moment before fading back, so you can see what changed (a split's two halves do the same).
 
 Splits and merges carry over to `.txt` and `.docx`. To copy text from the transcript, drag to select it, then press **Ctrl+C** (or right-click and choose *Copy*).
 
@@ -220,7 +223,7 @@ Splits and merges carry over to `.txt` and `.docx`. To copy text from the transc
 
 The window stays usable while speakers are being found, and **Cancel** stops straight away.
 
-**Exporting.** Click **Export…** and choose *Text (.txt)*, *Subtitles (.vtt)* (for web video players), *Subtitles (.srt)* (for most video players and editors; speakers appear as “Name: ” before their words) or *Word (.docx)*. In the same box, **Timestamps** sets the times in `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels), *Each paragraph*, or *None*. Subtitles always have times. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
+**Exporting.** Click **Export…** and choose *Text (.txt)*, *Subtitles (.vtt)* (for web video players), *Subtitles (.srt)* (for most video players and editors; speakers appear as “Name: ” before their words) or *Word (.docx)*. In the same box, **Timestamps** (ticked unless you untick it) adds times to `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels) or *Each paragraph*. Untick it for a transcript without times. Subtitles always have times. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
 
 **Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, tick **Leave out fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. To have it ticked every time, turn it on in **Settings**. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
 

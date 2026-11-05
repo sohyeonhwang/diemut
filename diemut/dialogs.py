@@ -4,7 +4,7 @@ list of shortcuts, Settings, and a question with a few choices."""
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import export, playback, transcribe
+from . import playback, transcribe
 from .export import fmt_time
 from .theme import ACCENT, BG, BORDER, BORDER_STRONG, FONTS, MUTED, TEXT, TEXT2, display_scale
 
@@ -414,10 +414,11 @@ def export_dialog(app):
 
     ts_row = tk.Frame(win, bg=BG)
     ts_row.pack(fill="x", pady=(12, 0))
-    tk.Label(ts_row, text="Timestamps", font=FONTS["body"], fg=TEXT2, bg=BG).pack(side="left")
+    include_ts = tk.BooleanVar(value=app.include_ts)
+    ts_check = ttk.Checkbutton(ts_row, text="Timestamps", variable=include_ts)
+    ts_check.pack(side="left")
     ts_box = ttk.Combobox(ts_row, style="Subtle.TCombobox", state="readonly",
-                          font=FONTS["dropdown"], width=18,
-                          values=[app.ts_labels[t] for t in export.TIMESTAMPS])
+                          font=FONTS["dropdown"], width=18, values=list(app.ts_labels.values()))
     ts_box.set(app.ts_labels[app.ts_mode])
     ts_box.pack(side="left", padx=(8, 0))
     ts_note = tk.Label(win, text="", font=FONTS["small"], fg=MUTED, bg=BG, anchor="w",
@@ -428,9 +429,20 @@ def export_dialog(app):
                                     variable=leave_out)
     leave_out_box.pack(anchor="w", pady=(10, 0))
 
+    chosen = [app.include_ts]          # the box as last ticked for .txt / .docx
+
+    def on_ts(*_):
+        text = kind.get() in ("txt", "docx")
+        if text:
+            chosen[0] = include_ts.get()
+        ts_box.configure(state="readonly" if text and include_ts.get() else "disabled")
+
     def on_kind(*_):
         k = kind.get()
-        ts_box.configure(state="readonly" if k in ("txt", "docx") else "disabled")
+        text = k in ("txt", "docx")
+        ts_check.configure(state="normal" if text else "disabled")
+        # Subtitles always have times and audio has none; text keeps the choice
+        include_ts.set(chosen[0] if text else k != "mp3")
         leave_out_box.configure(state="disabled" if k == "mp3" else "normal")
         turns = ("Each speaker turn: one time when the speaker changes (on every "
                  "paragraph, without speaker labels).")
@@ -443,12 +455,14 @@ def export_dialog(app):
                    "match the transcript.",
         }[k])
     kind.trace_add("write", on_kind)
+    include_ts.trace_add("write", on_ts)
     on_kind()
 
     def go(_event=None):
         app.export_kind = kind.get()
         app.ts_mode = next(t for t, label in app.ts_labels.items()
                             if label == ts_box.get())
+        app.include_ts = chosen[0]
         app.leave_out_fillers = leave_out.get()
         win.destroy()
         app.export(app.export_kind)

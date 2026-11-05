@@ -15,13 +15,16 @@ DEFAULTS = {
     "hover_hints": True,          # tooltips over buttons and boxes
     "microphone": None,           # live mode's microphone, by name; None: the system default
     "leave_out_fillers": False,   # whether Export starts with "Leave out fillers…" ticked
+    "panel_height": None,         # the correction panel's height (at 100% scaling); None: default
 }
+_TYPES = {"hover_hints": bool, "microphone": str, "leave_out_fillers": bool, "panel_height": int}
 
 
 def _valid(key, value):
-    if key == "microphone":
-        return value is None or isinstance(value, str)
-    return isinstance(value, type(DEFAULTS[key]))
+    """The setting's type; None too for the ones whose default is None."""
+    if value is None:
+        return DEFAULTS[key] is None
+    return isinstance(value, _TYPES[key]) and not (_TYPES[key] is int and isinstance(value, bool))
 
 
 def load(path=PATH):

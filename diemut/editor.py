@@ -97,12 +97,13 @@ class EditorMixin:
                 lambda: "Gives the selected words to this speaker." if self._text_sel()
                 else "Moves this paragraph to another speaker. Select words first to move "
                      "just those.")
-        button("✕", lambda: self.close_editor(save=True), "Close",
-               "Saves your changes and closes the panel.", side="right", pad=0)
-        button("▼", lambda: self._step(1), "Next paragraph", "Saves this one first.",
-               side="right", pad=(0, 6))
-        button("▲", lambda: self._step(-1), "Previous paragraph", "Saves this one first.",
-               side="right", pad=(0, 6))
+        self.nav_btns = [
+            button("✕", lambda: self.close_editor(save=True), "Close",
+                   "Saves your changes and closes the panel.", side="right", pad=0),
+            button("▼", lambda: self._step(1), "Next paragraph", "Saves this one first.",
+                   side="right", pad=(0, 6)),
+            button("▲", lambda: self._step(-1), "Previous paragraph", "Saves this one first.",
+                   side="right", pad=(0, 6))]
 
         # Audio bar: the paragraph's waveform, with a playhead and a selectable stretch, and
         # its start and end times along the bottom
@@ -125,7 +126,7 @@ class EditorMixin:
                                 relief="flat", highlightthickness=1, highlightbackground=BORDER,
                                 highlightcolor=ACCENT, padx=8, pady=6, undo=True,
                                 insertbackground=TEXT, exportselection=False)
-        self.edit_box.pack(fill="x", pady=(0, 4))
+        self.edit_box.pack(fill="both", expand=True, pady=(0, 4))   # grows with the panel
         self.edit_box.tag_configure("linked", background=TEXT, foreground=BG)
         # Made after "sel" and "linked", so it shows above them; dark text reads on the yellow
         self.edit_box.tag_configure("playing", background=PLAYING, foreground=TEXT)
@@ -182,6 +183,7 @@ class EditorMixin:
 
     # -- the correction panel: opening, saving, closing --
     def open_editor(self, k):
+        self._set_mode(None)
         if self.sel is not None and k != self.sel:
             # Saving the open paragraph can renumber the ones after it, so follow paragraph k
             # by its first piece: that piece object is untouched by the save.
@@ -204,19 +206,46 @@ class EditorMixin:
         self._fill_speakers(par["speaker"] if par["speaker"] is not None
                             else self.pieces[par["i0"]].get("speaker"))
         self._load_audio(par)
-        if not self.editor.winfo_ismapped():
-            self.editor.pack(side="bottom", fill="x", padx=14, pady=(4, 0), before=self.body)
+        if not self._panel_shown():
+            self._show_panel()
         self._show_unsaved()
         self.edit_box.focus_set()
         if self._play_job is None:
             self._play_job = self.root.after(50, self._tick_playback)
         self._update_par_tools()
 
+    def _panel_shown(self):
+        return str(self.editor) in [str(p) for p in self.split.panes()]
+
+    def _show_panel(self):
+        """Put the panel under the transcript, at the height last chosen with the divider
+        (kept in Settings, at 100% scaling) or, the first time, its natural height."""
+        self.editor.update_idletasks()
+        natural = self.editor.winfo_reqheight()
+        saved = self.settings["panel_height"]
+        room = self.split.winfo_height() - int(90 * self._scale)   # the transcript's minimum
+        height = int(saved * self._scale) if saved else natural
+        if room > 0:
+            height = min(height, room)
+        minimum = natural - FONTS["text"].metrics("linespace") * 2   # a two-line text box
+        self.split.add(self.editor, height=max(minimum, height), minsize=minimum,
+                       stretch="never")
+
+    def _remember_panel_height(self, _event=None):
+        """After the divider is dragged: keep the panel's height for next time."""
+        if not self._panel_shown():
+            return
+        height = round(self.editor.winfo_height() / self._scale)
+        if height != self.settings["panel_height"]:
+            self.change_setting("panel_height", height)
+
     def _show_open_paragraph(self, scroll=True):
-        """Highlight the open paragraph in the transcript."""
+        """Highlight the open paragraph in the transcript (not while merging, when the
+        white-on-black is for the checked paragraphs)."""
         t = self.text
         t.tag_remove("selected", "1.0", "end")
-        ranges = t.tag_ranges(f"par:{self.sel}") if self.sel is not None else ()
+        ranges = t.tag_ranges(f"par:{self.sel}") if self.sel is not None and \
+            self._mode != "merge" else ()
         if ranges:
             t.tag_add("selected", ranges[0], ranges[-1])
             if scroll:
@@ -333,7 +362,8 @@ class EditorMixin:
             self._play_job = None
         self.sel = None
         self.text.tag_remove("selected", "1.0", "end")
-        self.editor.pack_forget()
+        if self._panel_shown():
+            self.split.forget(self.editor)
         self._update_par_tools()
 
     # ---------------------------------------------------- audio review --
@@ -356,12 +386,21 @@ class EditorMixin:
         self._wave_span = (t0, t1)
         self._region, self._region_src = None, None
         self.edit_box.tag_remove("linked", "1.0", "end")
-        state = "normal" if len(audio) else "disabled"
-        for w in (self.play_btn, self.back_btn, self.fwd_btn, self.loop_btn):
-            w.configure(state=state)
-        self.speed_box.configure(state="readonly" if len(audio) else "disabled")
+        self._enable_panel(True)
         self.time_lbl.configure(text=self._tenths(t0))
         self._draw_wave()
+
+    def _enable_panel(self, on):
+        """The panel's controls and text box: usable, or greyed out (while merging). The
+        audio controls also need some audio."""
+        audio = on and len(self.player.source) > 0
+        for w in (self.play_btn, self.back_btn, self.fwd_btn, self.loop_btn):
+            w.configure(state="normal" if audio else "disabled")
+        for w in self.nav_btns:
+            w.configure(state="normal" if on else "disabled")
+        self.speed_box.configure(state="readonly" if audio else "disabled")
+        self.spk_box.configure(state="readonly" if on else "disabled")
+        self.edit_box.configure(state="normal" if on else "disabled", fg=TEXT if on else MUTED)
 
     def toggle_play(self):
         if self.player.is_playing:
@@ -519,7 +558,7 @@ class EditorMixin:
             self.player.set_loop((region or self._wave_span)[0])
 
     def _wave_press(self, event):
-        if self.sel is None or not len(self.player.source):
+        if self.sel is None or not len(self.player.source) or self._mode == "merge":
             return
         self._drag = (event.x, self._wave_time(event.x), False)
 
@@ -564,8 +603,9 @@ class EditorMixin:
         return self._spans_cache[1]
 
     def _show_playing_word(self, t):
-        """The faint yellow behind the word at the playhead."""
-        word = next(((c0, c1) for c0, c1, s, e in self._word_spans() if s <= t < e), None)
+        """The faint yellow behind the word at the playhead (none while merging)."""
+        word = None if self._mode == "merge" else next(
+            ((c0, c1) for c0, c1, s, e in self._word_spans() if s <= t < e), None)
         if word != self._playing_word:
             self._playing_word = word
             self.edit_box.tag_remove("playing", "1.0", "end")

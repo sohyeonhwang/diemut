@@ -20,7 +20,7 @@ from .editor import SEEK_BINDING, EditorMixin
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
 from .paragraphs import ParagraphsMixin
-from .theme import (ACCENT, BG, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK, MIC_ICON,
+from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK, MIC_ICON,
                     MUTED, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, display_scale,
                     file_cursor, setup_style)
 
@@ -69,6 +69,7 @@ class App(EditorMixin, ParagraphsMixin):
         self._merge_range = None    # (first, last) paragraphs checked in merge mode
         self._merge_anchor = None   # the paragraph clicked last, where Shift+click counts from
         self._press = None          # [paragraph, dragged?, Shift?] while the mouse is down
+        self._flash_job = None      # fading a just-merged paragraph back (_flash)
         self._region = None        # (start, end) seconds selected on the audio bar or as words
         self._region_src = None    # "bar" or "text"
         self._drag = None
@@ -431,16 +432,24 @@ class App(EditorMixin, ParagraphsMixin):
                                         command=self.merge_selected)
         self.merge_cancel_btn = ttk.Button(self.par_tools, text="Cancel", style="Accent.TButton",
                                            command=lambda: self._set_mode(None))
-        self.ts_labels = {"turns": "Each speaker turn", "paragraphs": "Each paragraph",
-                          "none": "None"}
+        self.ts_labels = {"turns": "Each speaker turn", "paragraphs": "Each paragraph"}
         self.ts_mode = "turns"        # remembered between exports
+        self.include_ts = True        # Export's Timestamps box
         self.leave_out_fillers = self.settings["leave_out_fillers"]   # what Export starts with
         self.export_kind = "txt"
 
         bottom = tk.Frame(screen, bg=BG)
         bottom.pack(side="bottom", fill="x", padx=14, pady=(4, 12))
-        body = tk.Frame(screen, bg=BG, highlightthickness=1, highlightbackground=BORDER_STRONG)
-        body.pack(fill="both", expand=True, padx=14, pady=4)
+        # The transcript above, and the correction panel below it when it's open, with a
+        # divider between them that can be dragged
+        self.split = tk.PanedWindow(screen, orient="vertical", bg=BORDER, bd=0,
+                                    sashwidth=max(5, int(5 * self._scale)), sashrelief="flat",
+                                    sashcursor="sb_v_double_arrow", opaqueresize=True)
+        self.split.pack(fill="both", expand=True, padx=14, pady=4)
+        self.split.bind("<ButtonRelease-1>", self._remember_panel_height, add="+")
+        body = tk.Frame(self.split, bg=BG, highlightthickness=1,
+                        highlightbackground=BORDER_STRONG)
+        self.split.add(body, minsize=int(90 * self._scale), stretch="always")
         self.body = body
         self.text = tk.Text(body, wrap="word", font=FONTS["text"], bg=BG, fg=TEXT, relief="flat",
                             padx=14, pady=10, highlightthickness=0, cursor="arrow",
@@ -453,6 +462,9 @@ class App(EditorMixin, ParagraphsMixin):
         # Fillers and false starts, which Export can leave out (before "selected", so the open
         # paragraph's white-on-black still wins)
         self.text.tag_configure("filler", foreground=MUTED)
+        # Just merged or split: shown white on black, then faded (_flash). Before "selected",
+        # so the open paragraph's highlight stays put
+        self.text.tag_configure("flash")
         self.text.tag_configure("speaker", font=FONTS["speaker"], foreground=TEXT)
         self.text.tag_configure("pencil", font=FONTS["small"], foreground=MUTED)
         self.text.tag_configure("para", spacing3=8)
@@ -460,19 +472,18 @@ class App(EditorMixin, ParagraphsMixin):
         self.text.tag_configure("pending", foreground=MUTED)
         self.text.tag_configure("placeholder", foreground=MUTED)
         self.text.tag_configure("selected", background=TEXT, foreground=BG)
+        self.text.tag_configure("merging", background=TEXT, foreground=BG)   # checked, merging
         self.text.bind("<Button-1>", self._on_text_press)
         self.text.bind("<ButtonRelease-1>", self._on_text_release)
         self.text.bind("<B1-Motion>", self._on_text_drag)
         self.text.bind(SEEK_BINDING, self._on_text_seek_click)
         self.root.bind("<Escape>", lambda e: self._set_mode(None), add="+")
         self._needle = file_cursor(self.root, "needle", "hand2")
-        self.text.tag_configure("check", foreground=MUTED)
-        self.text.tag_configure("checked", foreground=TEXT)
         aqua = self.root.tk.call("tk", "windowingsystem") == "aqua"
         for seq in (("<Button-2>", "<Control-Button-1>") if aqua else ("<Button-3>",)):
             self.text.bind(seq, self._on_text_menu)
         self.par_menu = self._menu(self.root)
-        self.editor = self._build_editor(screen)
+        self.editor = self._build_editor(self.split)
 
         self._settings_button(bottom).pack(side="right")
         self.progress = ttk.Progressbar(bottom, length=160, mode="determinate")
@@ -844,9 +855,12 @@ class App(EditorMixin, ParagraphsMixin):
         self.root.after(500, self._tick)
 
     # -------------------------------------------------------- rendering --
-    def _render_all(self, placeholder=None):
+    def _render_all(self, placeholder=None, anchor=None):
+        """Rebuild the transcript. The view stays still: anchor (from _view_anchor) is a
+        word to keep in the same place on screen; by default, the first word showing."""
         t = self.text
-        top = t.yview()[0]      # stay where the reader was
+        self._end_flash()
+        anchor = anchor or self._view_anchor()
         t.configure(state="normal")
         t.delete("1.0", "end")
         self._r = {"prev": None, "par_len": 0}
@@ -890,11 +904,10 @@ class App(EditorMixin, ParagraphsMixin):
             self._r = {"prev": self.pieces[-1],
                        "par_len": len(t.get("end-1c linestart", "end-1c"))}
         t.configure(state="disabled", cursor=self._text_cursor())
-        if top:
-            t.yview_moveto(top)
+        self._restore_view(anchor)
         self._grey_fillers()
         self._show_open_paragraph(scroll=False)
-        self._draw_checks()
+        self._draw_merge()
         self._update_par_tools()
 
     def _append_piece(self, piece):
@@ -1359,7 +1372,7 @@ class App(EditorMixin, ParagraphsMixin):
                   else self.pieces)
         try:
             if kind == "txt":
-                export.export_txt(path, pieces, self.names, use_speakers, self.ts_mode)
+                export.export_txt(path, pieces, self.names, use_speakers, self._ts_choice())
             elif kind == "vtt":
                 export.export_vtt(path, pieces, self.names, use_speakers)
             elif kind == "srt":
@@ -1374,12 +1387,16 @@ class App(EditorMixin, ParagraphsMixin):
                         f"Language: {lang}"]
                 if self.speaker_count:
                     meta.append(f"Speakers: {self.speaker_count}")
-                export.export_docx(path, pieces, self.names, use_speakers, self.ts_mode,
+                export.export_docx(path, pieces, self.names, use_speakers, self._ts_choice(),
                                    f"Transcript – {base}", meta)
         except Exception as exc:
             messagebox.showerror("Export failed", f"diemut couldn't save the file.\n\n{exc}")
             return
         self.status_lbl.configure(text=f"Saved {os.path.basename(path)}")
+
+    def _ts_choice(self):
+        """Which times .txt and .docx get: one of export.TIMESTAMPS."""
+        return self.ts_mode if self.include_ts else "none"
 
     def clear(self):
         if self.busy or not self.pieces:

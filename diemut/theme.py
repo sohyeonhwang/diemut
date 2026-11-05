@@ -32,6 +32,12 @@ def display_scale(widget):
     return max(1.0, widget.winfo_fpixels("1i") / 96.0)
 
 
+def mix(a, b, f):
+    """The colour f of the way from a to b ("#rrggbb"; f from 0 to 1)."""
+    ca, cb = ([int(c[i:i + 2], 16) for i in (1, 3, 5)] for c in (a, b))
+    return "#%02x%02x%02x" % tuple(round(x + (y - x) * f) for x, y in zip(ca, cb))
+
+
 def shade(color, factor):
     """color ("#rrggbb") darkened by factor (0.9 = 10% darker)."""
     r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
