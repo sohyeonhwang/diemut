@@ -41,6 +41,7 @@ SHORTCUTS = [
     ("Ctrl+L", "Loop on or off", None),
     ("Ctrl+↓ / Ctrl+↑", "Slower / faster", None),
     ("Ctrl+Enter", "Save the correction", None),
+    ("Ctrl+S", "Save the session (Ctrl+Shift+S: under a new name)", None),
     ("Esc", "Discard your changes and close the panel", None),
 ]
 

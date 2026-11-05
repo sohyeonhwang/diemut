@@ -7,13 +7,14 @@ The correction panel is in editor.py and merging paragraphs in paragraphs.py
 import datetime as dt
 import os
 import queue
+import shutil
 import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import export, fillers, playback, settings, speakers, transcribe
-from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_speaker_count, count_label,
+from . import export, fillers, playback, sessions, settings, speakers, transcribe
+from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_choice, ask_speaker_count, count_label,
                       export_dialog, settings_window, SpeakersWindow, Tooltip)
 from .editor import SEEK_BINDING, EditorMixin
 from .export import fmt_time
@@ -26,6 +27,7 @@ from .theme import (ACCENT, BG, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
                "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv")
 SEPARATOR = "────"
+AUTOSAVE_MS = 30_000     # how often the recovery copy is brought up to date
 
 
 class App(EditorMixin, ParagraphsMixin):
@@ -73,6 +75,7 @@ class App(EditorMixin, ParagraphsMixin):
         self._spans_cache = None   # ((open paragraph, edit text), word positions and times)
         self._playing_word = None  # (char start, char end) highlighted as it plays
         self._spk_map = {}
+        self._recovery = None       # sessions.Recovery while there are unsaved changes
         self._clear_transcript()
 
         self.container = tk.Frame(root, bg=BG)
@@ -85,6 +88,10 @@ class App(EditorMixin, ParagraphsMixin):
 
         root.after(100, self._poll)
         root.after(500, self._tick)
+        root.after(AUTOSAVE_MS, self._autosave)
+        root.after(300, self._offer_recovery)
+        root.bind("<Control-s>", lambda e: self._save_key(False))
+        root.bind("<Control-S>", lambda e: self._save_key(True))       # Ctrl+Shift+S
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_icon(self):
@@ -251,6 +258,9 @@ class App(EditorMixin, ParagraphsMixin):
 
         self.note = tk.Label(inner, text="", font=FONTS["small"], fg=MUTED, bg=BG,
                              wraplength=460, justify="center")
+        self.open_session_btn = ttk.Button(inner, text="Open saved session…",
+                                           command=self.open_session)
+        self.open_session_btn.pack(pady=(16, 0))
         self._settings_button(screen).place(relx=1, rely=1, x=-14, y=-12, anchor="se")
         return screen
 
@@ -355,7 +365,7 @@ class App(EditorMixin, ParagraphsMixin):
                          "Switches mid-sentence aren't handled well.")
         if notes:
             self.note.configure(text=" ".join(notes))
-            self.note.pack(pady=(8, 0))
+            self.note.pack(pady=(8, 0), before=self.open_session_btn)   # under the form
         else:
             self.note.pack_forget()
 
@@ -397,6 +407,13 @@ class App(EditorMixin, ParagraphsMixin):
 
         self.export_btn = ttk.Button(controls, text="Export…", style="Accent.TButton", command=lambda: export_dialog(self))
         self.export_btn.pack(side="right")
+        self.save_btn = ttk.Button(controls, text="Save", style="Accent.TButton",
+                                   command=self.save_session)
+        self.save_btn.pack(side="right", padx=(0, 6))
+        Tooltip(self.save_btn, "Save session",
+                "Saves the transcript, your corrections and the audio as a .diemut file you "
+                "can open again from the start screen. Ctrl+S; Ctrl+Shift+S saves under a "
+                "new name.")
         # Merge, centred in the row whatever is on the left and right
         self.par_tools = tk.Frame(controls, bg=BG)
         self.par_tools.place(relx=0.5, rely=0, anchor="n")   # top-aligned, like the others
@@ -479,12 +496,21 @@ class App(EditorMixin, ParagraphsMixin):
         self._update_header_tags()
 
     def _confirm_discard(self, action="continue"):
+        """True if the transcript can go: nothing unsaved, saved now, or Don't save."""
         if not self.dirty or not self.pieces:
             return True
-        return messagebox.askyesno(
-            "Transcript not exported",
-            f"You haven't exported this transcript yet. If you {action}, it will be lost.\n\n"
-            f"{action.capitalize()} anyway?")
+        choice = ask_choice(
+            self.root, "Save changes?",
+            f"Save this session before you {action}? If you don't, the transcript and your "
+            "corrections are lost. Files you've exported aren't affected.",
+            [("save", "Save"), ("discard", "Don't save"), ("cancel", "Cancel")])
+        if choice == "save":
+            return self.save_session()
+        if choice == "discard":
+            self.dirty = False
+            self._drop_recovery()
+            return True
+        return False
 
     def go_home(self):
         self._save_edit()
@@ -533,10 +559,16 @@ class App(EditorMixin, ParagraphsMixin):
         self._clear_transcript()
 
     def _clear_transcript(self):
+        self._drop_recovery()
+        self.session_path = None    # the .diemut file this was opened from or saved to
         self.pieces = []
         self.names = {}
         self.speaker_count = 0
         self.dirty = False
+        # The model and language this transcript was made with (the start screen's choice
+        # is for the next one)
+        self.session_model = self.model_name
+        self.session_language = self.language
         self.detected_language = None
         self.duration = None
         self.source_path = None
@@ -776,18 +808,19 @@ class App(EditorMixin, ParagraphsMixin):
             else:
                 self.newfile_btn.pack(side="left")
         self.clear_btn.configure(state="disabled" if self.busy else "normal")
+        self.save_btn.configure(state="normal" if self._can_save() else "disabled")
         self.clear_btn.pack(side="left", padx=(6, 0))
         self._update_par_tools()
 
     def _update_header_tags(self):
         for w in self.header_tags.winfo_children():
             w.destroy()
-        if self.language == AUTO:
+        if self.session_language == AUTO:
             lang = (f"{language_name(self.detected_language)} (auto)"
                     if self.detected_language else "Auto-detect")
         else:
-            lang = language_name(self.language)
-        tags = [f"whisper-{self.model_name}", lang]
+            lang = language_name(self.session_language)
+        tags = [f"whisper-{self.session_model}", lang]
         if self.speaker_count:
             tags.append(f"{self.speaker_count} speaker{'s' if self.speaker_count > 1 else ''}")
         if self.mode == "live" and self.mic_name:
@@ -1075,6 +1108,198 @@ class App(EditorMixin, ParagraphsMixin):
             hint = "Something went wrong."
         return f"{hint}\n\nDetails: {message}"
 
+    # --------------------------------------------------------- sessions --
+    @property
+    def dirty(self):
+        """True while there are changes that aren't saved in a session file."""
+        return self._dirty
+
+    @dirty.setter
+    def dirty(self, value):
+        self._dirty = value
+        self._update_title()
+
+    def _update_title(self):
+        """The window title: the session's file name, with * while there are unsaved changes."""
+        if self.session_path:
+            name = os.path.basename(self.session_path)
+        elif self.pieces:
+            name = "Unsaved session"
+        else:
+            self.root.title("diemut")
+            return
+        self.root.title(f"{'*' if self.dirty else ''}{name} – diemut")
+
+    def _default_name(self):
+        """A file name (without extension) for saving or exporting this transcript."""
+        if self.session_path:
+            return os.path.splitext(os.path.basename(self.session_path))[0]
+        if self.source_path:
+            return os.path.splitext(os.path.basename(self.source_path))[0]
+        return f"live_{self.session_start:%Y-%m-%d_%H%M}"
+
+    def _can_save(self):
+        return bool(self.pieces) and not self.busy
+
+    def _save_key(self, ask):
+        if self.transcript_screen.winfo_ismapped() and self._can_save():
+            self.save_session(ask=ask)
+        return "break"
+
+    def save_session(self, ask=False):
+        """Save to the session's file, asking where the first time (or with ask: Save as).
+        Returns True if it was saved."""
+        self._save_edit()
+        if not self._can_save():
+            messagebox.showinfo("Nothing to save", "There's no transcript to save yet."
+                                if not self.pieces else "Wait for diemut to finish, then save.")
+            return False
+        path = self.session_path
+        if ask or not path:
+            path = filedialog.asksaveasfilename(
+                title="Save session", defaultextension=sessions.SUFFIX,
+                initialfile=self._default_name() + sessions.SUFFIX,
+                filetypes=[("diemut session", f"*{sessions.SUFFIX}"), ("All files", "*.*")])
+            if not path:
+                return False
+        self.status_lbl.configure(text="Saving…")
+        self.root.configure(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            sessions.save(path, self._session_state(), self.audio)
+        except Exception as exc:
+            messagebox.showerror("Session not saved",
+                                 f"diemut couldn't save the session to {path}. Check that the "
+                                 f"folder exists and can be written to.\n\nDetails: {exc}")
+            self.status_lbl.configure(text="Session not saved.")
+            return False
+        finally:
+            self.root.configure(cursor="")
+        self.session_path = path
+        self.dirty = False
+        self._drop_recovery()
+        self.status_lbl.configure(text=f"Saved {os.path.basename(path)}")
+        return True
+
+    def _session_state(self):
+        """Everything about the transcript that a session file keeps, except the audio."""
+        return {
+            "mode": self.mode,
+            "source": os.path.basename(self.source_path) if self.source_path else None,
+            "started": self.session_start.isoformat(timespec="seconds"),
+            "model": self.session_model,
+            "language": self.session_language,
+            "detected_language": self.detected_language,
+            "duration": self.duration,
+            "speaker_count": self.speaker_count,
+            "names": {str(k): v for k, v in self.names.items()},
+            "pieces": self.pieces,
+        }
+
+    def open_session(self):
+        path = filedialog.askopenfilename(
+            title="Open a saved session",
+            filetypes=[("diemut session", f"*{sessions.SUFFIX}"), ("All files", "*.*")])
+        if not path or not self._confirm_discard("open another session"):
+            return
+        self.root.configure(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            state, clip = sessions.load(path)
+        except sessions.SessionError as exc:
+            messagebox.showerror("Couldn't open the session", str(exc))
+            return
+        finally:
+            self.root.configure(cursor="")
+        self._apply_session(state, clip, path)
+        self.status_lbl.configure(text=f"Opened {os.path.basename(path)}" + (
+            "" if clip is not None else ". Its audio is missing, so it can't be played."))
+
+    def _apply_session(self, state, clip, path):
+        """Show a session that was saved (path) or recovered (path None)."""
+        self.reset_transcript()
+        self.session_path = path
+        self.pieces = state["pieces"]
+        self.names = state["names"]
+        self.speaker_count = state.get("speaker_count") or len(self._speaker_ids())
+        self.session_model = state.get("model") or self.model_name
+        self.session_language = state.get("language") or AUTO
+        self.detected_language = state.get("detected_language")
+        self.duration = state.get("duration")
+        self.source_path = state.get("source")
+        try:
+            self.session_start = dt.datetime.fromisoformat(state["started"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        self.audio = clip
+        end = max([clip.end if clip else 0.0] + [p["end"] for p in self.pieces])
+        mode = "live" if state.get("mode") == "live" else "file"
+        self._show_transcript(mode)
+        if mode == "live":
+            self.live_state = "stopped"
+            self.live_t0 = time.monotonic() - end    # a recording that has finished
+            self.sub_lbl.configure(text=fmt_time(end))
+        else:
+            name = self.source_path or os.path.basename(path or "") or "Recovered session"
+            self.title_lbl.configure(text=f"{FILE_ICON} {name}")
+            self.sub_lbl.configure(text=fmt_time(self.duration or end))
+        self.dirty = path is None       # a recovered session hasn't been saved yet
+        self._render_all()
+        self._update_controls()
+        self._update_header_tags()
+
+    # -- the recovery copy, while there are unsaved changes --
+    def _autosave(self):
+        self._write_recovery()
+        self.root.after(AUTOSAVE_MS, self._autosave)
+
+    def _write_recovery(self):
+        """Bring the recovery copy up to date, if there are unsaved changes. Writing it also
+        tells another diemut that it's still in use (see sessions.left_behind)."""
+        if not (self.dirty and self.pieces):
+            return
+        try:
+            self._recovery = self._recovery or sessions.Recovery()
+            self._recovery.write(self._session_state(), self.audio)
+        except OSError:
+            pass        # only a safety net: carry on without it
+
+    def _drop_recovery(self):
+        if self._recovery is not None:
+            self._recovery.delete()
+            self._recovery = None
+
+    def _offer_recovery(self):
+        """At start, offer back the newest session a diemut closed without saving."""
+        found = sessions.left_behind()
+        if not found:
+            return
+        folder, state = found[0]
+        try:
+            started = f"{dt.datetime.fromisoformat(state['started']):%d %b %Y %H:%M}"
+        except (KeyError, TypeError, ValueError):
+            started = "an unknown time"
+        what = ("A live recording" if state.get("mode") == "live"
+                else f"The transcript of {state.get('source') or 'a file'}")
+        words = len(state.get("pieces") or [])
+        choice = ask_choice(
+            self.root, "Recover unsaved session?",
+            f"diemut closed before a session was saved. {what}, from {started} "
+            f"({words:,} words), can be recovered.",
+            [("open", "Open it"), ("delete", "Delete it"), ("later", "Not now")])
+        if choice == "delete":
+            shutil.rmtree(folder, ignore_errors=True)
+        elif choice == "open":
+            try:
+                state, clip = sessions.load_recovery(folder)
+            except sessions.SessionError as exc:
+                messagebox.showerror("Couldn't recover the session", str(exc))
+                return
+            self._apply_session(state, clip, None)
+            self._write_recovery()
+            shutil.rmtree(folder, ignore_errors=True)
+            self.status_lbl.configure(text="Recovered the session. Save it to keep it.")
+
     # ----------------------------------------------------------- export --
     def export(self, kind):
         self._save_edit()
@@ -1085,10 +1310,7 @@ class App(EditorMixin, ParagraphsMixin):
         elif not self.pieces:
             messagebox.showinfo("Nothing to export", "There's no transcript yet.")
             return
-        if self.source_path:
-            base = os.path.splitext(os.path.basename(self.source_path))[0]
-        else:
-            base = f"live_{self.session_start:%Y-%m-%d_%H%M}"
+        base = self._default_name()
         path = filedialog.asksaveasfilename(
             title=f"Export .{kind}", defaultextension=f".{kind}", initialfile=f"{base}.{kind}",
             filetypes=[(f"{kind.upper()} file", f"*.{kind}"), ("All files", "*.*")])
@@ -1112,11 +1334,11 @@ class App(EditorMixin, ParagraphsMixin):
                 export.export_vtt(path, pieces, self.names, use_speakers)
             else:
                 lang = (language_name(self.detected_language) + " (detected)"
-                        if self.language == AUTO and self.detected_language
-                        else language_name(self.language))
+                        if self.session_language == AUTO and self.detected_language
+                        else language_name(self.session_language))
                 meta = [f"Source: {os.path.basename(self.source_path) if self.source_path else 'Live microphone'}",
                         f"Date: {self.session_start:%Y-%m-%d %H:%M}",
-                        f"STT model: whisper-{self.model_name} (faster-whisper)",
+                        f"STT model: whisper-{self.session_model} (faster-whisper)",
                         f"Language: {lang}"]
                 if self.speaker_count:
                     meta.append(f"Speakers: {self.speaker_count}")
@@ -1125,7 +1347,6 @@ class App(EditorMixin, ParagraphsMixin):
         except Exception as exc:
             messagebox.showerror("Export failed", f"diemut couldn't save the file.\n\n{exc}")
             return
-        self.dirty = False
         self.status_lbl.configure(text=f"Saved {os.path.basename(path)}")
 
     def _timestamps(self):
@@ -1134,9 +1355,7 @@ class App(EditorMixin, ParagraphsMixin):
     def clear(self):
         if self.busy or not self.pieces:
             return
-        if not messagebox.askyesno("Clear transcript?",
-                                   "This removes the transcript from the window. "
-                                   "Files you've already exported aren't affected."):
+        if not self._confirm_discard("clear it"):
             return
         keep_source = self.source_path
         self.close_editor(save=False)
@@ -1144,4 +1363,5 @@ class App(EditorMixin, ParagraphsMixin):
         self.source_path = keep_source
         self._render_all("")
         self._update_header_tags()
+        self._update_controls()
         self.status_lbl.configure(text="Cleared.")

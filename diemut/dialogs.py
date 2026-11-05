@@ -1,5 +1,5 @@
 """Small windows: tooltips, the Speakers window, the speaker-count and Export dialogs, the
-list of shortcuts, and Settings."""
+list of shortcuts, Settings, and a question with a few choices."""
 
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -282,6 +282,31 @@ def ask_speaker_count(parent, title, message, action):
     box.focus_set()
     parent.wait_window(win)
     return "n" in result, result.get("n")
+
+
+def ask_choice(parent, title, message, choices):
+    """A small modal question with a button for each of choices, [(key, label)]: the first
+    is the main one (Enter). Returns the key chosen, or None if it was closed (Esc)."""
+    win = make_dialog(parent, title)
+    tk.Label(win, text=message, font=FONTS["body"], fg=TEXT, bg=BG, justify="left",
+             anchor="w", wraplength=int(380 * _scale(parent))).pack(fill="x")
+    result = {}
+
+    def choose(key):
+        result["key"] = key
+        win.destroy()
+
+    row = tk.Frame(win, bg=BG)
+    row.pack(fill="x", pady=(14, 0))
+    for i, (key, label) in reversed(list(enumerate(choices))):
+        ttk.Button(row, text=label, style="Accent.TButton" if i == 0 else "TButton",
+                   command=lambda k=key: choose(k)).pack(side="right", padx=(6, 0))
+    win.bind("<Return>", lambda e: choose(choices[0][0]))
+    win.bind("<Escape>", lambda e: win.destroy())
+    show_dialog(win, parent, modal=True)
+    win.focus_set()
+    parent.wait_window(win)
+    return result.get("key")
 
 
 def shortcuts_window(app, shortcuts):

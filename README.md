@@ -149,7 +149,7 @@ On Windows, `~` means `C:\Users\<your name>`. After these downloads, `diemut` wo
 
 ## Using diemut
 
-**Start screen.** Choose the **STT model** and **Language**, then pick a mode. Hover over the model names under the title to see what each one does. For files, you can also choose how many **Speakers** there are, if you know; this makes the speaker labels more accurate. Leave it at *Not sure* and `diemut` counts them, or choose *1 person* to skip speaker labelling. Live recordings ask after you press Stop. For live mode, the microphone is chosen in **Settings**.
+**Start screen.** Choose the **STT model** and **Language**, then pick a mode. Hover over the model names under the title to see what each one does. For files, you can also choose how many **Speakers** there are, if you know; this makes the speaker labels more accurate. Leave it at *Not sure* and `diemut` counts them, or choose *1 person* to skip speaker labelling. Live recordings ask after you press Stop. For live mode, the microphone is chosen in **Settings**. **Open saved session…** opens a session you saved earlier (see *Saving sessions* below).
 
 **Live from microphone**
 This *won't* capture audio coming from your laptop/machine, so note that you can't live transcribe, say, a video call. It is better to record that with another software and upload the audio to `diemut` from file. 
@@ -197,6 +197,7 @@ Keyboard shortcuts, which all work while you're typing in the text box:
 | Enter | Split the paragraph at the cursor |
 | Ctrl+Enter | Save the correction |
 | Esc | Discard your changes and close the panel |
+| Ctrl+S | Save the session (Ctrl+Shift+S saves it under a new name) |
 
 Corrections carry over to every export format. Words you didn't change keep their exact timings, and new or corrected words are fitted into the time between the words around them, so subtitle timing stays accurate. Deleting all the text in a paragraph removes it.
 
@@ -221,7 +222,13 @@ The window stays usable while speakers are being found, and **Cancel** stops str
 
 **Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, tick **Leave out fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. To have it ticked every time, turn it on in **Settings**. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
 
-**Clear** removes the transcript from the window. `diemut` warns you before discarding a transcript you haven't exported.
+**Saving sessions.** **Save** (next to Export…, or **Ctrl+S**) keeps everything as a `.diemut` file: the transcript, your corrections, speaker names, paragraph splits and merges, and the audio, so you can open it again later from the start screen with **Open saved session…** and carry on listening and correcting. The first save asks where to put it; after that, Save updates the same file, and **Ctrl+Shift+S** saves it under a new name. The window title shows the file's name, with a `*` in front while there are changes you haven't saved. A `.diemut` file is about 25 MB per hour of audio (the audio is kept losslessly) and stays on your computer like any other file.
+
+If you go back, clear, open something else or quit with unsaved changes, `diemut` asks whether to **Save**, **Don't save**, or **Cancel**. Exporting doesn't count as saving: an exported file can't be opened again for correcting.
+
+While there are unsaved changes, `diemut` also keeps a recovery copy every 30 seconds, in `~/.cache/diemut/recovery` (or `$DIEMUT_HOME/recovery`). If it closes without saving, for example after a crash or a power cut during a live recording, the next start offers it back: **Open it**, **Delete it**, or **Not now**. The copy is deleted once you save or choose *Don't save*.
+
+**Clear** removes the transcript from the window, after asking about saving if there are unsaved changes.
 
 **Settings** (the pink ⚙ at the bottom right of every screen). Changes apply straight away and are remembered the next time you open `diemut`:
 - **Microphone**: what live mode records from. *System default* is the one your computer uses. A headset plugged in after `diemut` started shows up in the list too. A change takes effect at the next **Start**.
