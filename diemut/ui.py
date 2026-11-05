@@ -12,21 +12,20 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import export, fillers, playback, speakers, transcribe
+from . import export, fillers, playback, settings, speakers, transcribe
 from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_speaker_count, count_label,
-                      export_dialog, SpeakersWindow, Tooltip)
+                      export_dialog, settings_window, SpeakersWindow, Tooltip)
 from .editor import SEEK_BINDING, EditorMixin
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
 from .paragraphs import ParagraphsMixin
 from .theme import (ACCENT, BG, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK, MIC_ICON,
-                    MUTED, SURFACE, TEXT, TEXT2, WINDOWS, file_cursor,
+                    MUTED, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, file_cursor,
                     setup_style)
 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
                "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv")
 SEPARATOR = "────"
-DEFAULT_MIC = "System default"
 
 
 class App(EditorMixin, ParagraphsMixin):
@@ -51,8 +50,11 @@ class App(EditorMixin, ParagraphsMixin):
         self.stage = None
         self.player = playback.Player()
         self.num_speakers = None    # how many people speak in the next file, if known
-        self.mic_name = None        # the microphone for live mode, by name; None: the default
+        self.settings = settings.load()    # remembered between launches (settings.py)
+        Tooltip.enabled = self.settings["hover_hints"]
+        self._settings_win = None
         self._speakers_win = None
+        self._shortcuts_win = None
         self._merge_undo = None     # (speaker of each piece, names) before the last merge
         self.mini_active = False
         self._pending = False
@@ -247,20 +249,9 @@ class App(EditorMixin, ParagraphsMixin):
                     "accurate speaker labels. For live recordings, you can find speakers "
                     "after you press Stop.")
 
-        lbl = tk.Label(form, text="Microphone", font=FONTS["label"], fg=TEXT2, bg=BG)
-        lbl.grid(row=3, column=0, sticky="e", padx=(0, 10), pady=3)
-        self.mic_box = ttk.Combobox(form, style="Subtle.TCombobox", state="readonly",
-                                    font=FONTS["dropdown"], width=40,
-                                    postcommand=self._fill_mics)   # fresh each time it opens
-        self.mic_box.set(DEFAULT_MIC)
-        self.mic_box.grid(row=3, column=1, sticky="w", pady=3)
-        self.mic_box.bind("<<ComboboxSelected>>", self._on_mic)
-        for w in (lbl, self.mic_box):
-            Tooltip(w, "Microphone", "What live mode records from. A microphone or headset "
-                                     "plugged in after diemut started shows up here too.")
-
         self.note = tk.Label(inner, text="", font=FONTS["small"], fg=MUTED, bg=BG,
                              wraplength=460, justify="center")
+        self._settings_button(screen).place(relx=1, rely=1, x=-14, y=-12, anchor="se")
         return screen
 
     def _load_logo(self):
@@ -276,7 +267,7 @@ class App(EditorMixin, ParagraphsMixin):
     def _model_label(self, name):
         size = transcribe.model_size(name)
         note = next(n for m, _, n in transcribe.MODELS if m == name)
-        return f"faster-whisper · {name} ({size}{', ' + note if note else ''})"
+        return f"faster-whisper • {name} ({size}{', ' + note if note else ''})"
 
     def _card(self, parent, icon, title, subtitle, command):
         card = tk.Frame(parent, bg=BG, highlightthickness=1, highlightbackground=BORDER_STRONG,
@@ -309,13 +300,35 @@ class App(EditorMixin, ParagraphsMixin):
         self.model_box.selection_clear()
         self._update_note()
 
-    def _fill_mics(self):
-        self.mic_box.configure(values=[DEFAULT_MIC] + [n for _, n in transcribe.input_devices()])
+    def _settings_button(self, parent):
+        """⚙, at the bottom right of each screen."""
+        button = ttk.Button(parent, text=SETTINGS_ICON, style="Icon.TButton",
+                            command=lambda: settings_window(self))
+        Tooltip(button, "Settings", "The microphone, hover hints, and what Export starts with.")
+        return button
 
-    def _on_mic(self, _event=None):
-        label = self.mic_box.get()
-        self.mic_name = None if label == DEFAULT_MIC else label
-        self.mic_box.selection_clear()
+    @property
+    def mic_name(self):
+        """Live mode's microphone, by name (None: the system default), from Settings."""
+        return self.settings["microphone"]
+
+    def change_setting(self, key, value):
+        """Apply a setting from the Settings window, and remember it for next time."""
+        self.settings[key] = value
+        if key == "hover_hints":
+            Tooltip.enabled = value
+        elif key == "leave_out_fillers":
+            self.leave_out_fillers = value      # what Export starts with
+        elif key == "microphone":
+            self._update_header_tags()
+        try:
+            settings.save(self.settings)
+        except OSError as exc:
+            messagebox.showerror(
+                "Settings not saved",
+                f"diemut couldn't save your settings to {settings.PATH}. They apply until you "
+                f"quit. Check that the folder can be written to.\n\nDetails: {exc}",
+                parent=self._settings_win)
 
     def _on_count(self, _event=None):
         self.num_speakers = next(n for n in SPEAKER_COUNTS
@@ -380,6 +393,7 @@ class App(EditorMixin, ParagraphsMixin):
                                      command=self.cancel_file)
         self.newfile_btn = ttk.Button(self.controls_left, text="New file…", style="Accent.TButton", 
                                       command=self.open_file)
+        self.clear_btn = ttk.Button(self.controls_left, text="Clear", command=self.clear)
 
         self.export_btn = ttk.Button(controls, text="Export…", style="Accent.TButton", command=lambda: export_dialog(self))
         self.export_btn.pack(side="right")
@@ -399,7 +413,7 @@ class App(EditorMixin, ParagraphsMixin):
         self.ts_labels = {"turns": "Each speaker turn", "paragraphs": "Each paragraph",
                           "none": "None"}
         self.ts_mode = "turns"        # remembered between exports
-        self.leave_out_fillers = False  # Export: leave out um, uh… and false starts
+        self.leave_out_fillers = self.settings["leave_out_fillers"]   # what Export starts with
         self.export_kind = "txt"
 
         bottom = tk.Frame(screen, bg=BG)
@@ -439,8 +453,7 @@ class App(EditorMixin, ParagraphsMixin):
         self.par_menu = self._menu(self.root)
         self.editor = self._build_editor(screen)
 
-        self.clear_btn = ttk.Button(bottom, text="Clear", command=self.clear)
-        self.clear_btn.pack(side="right")
+        self._settings_button(bottom).pack(side="right")
         self.progress = ttk.Progressbar(bottom, length=160, mode="determinate")
         self.status_lbl = tk.Label(bottom, text="", fg=TEXT2, bg=BG, font=FONTS["body"],
                                    anchor="w")
@@ -763,6 +776,7 @@ class App(EditorMixin, ParagraphsMixin):
             else:
                 self.newfile_btn.pack(side="left")
         self.clear_btn.configure(state="disabled" if self.busy else "normal")
+        self.clear_btn.pack(side="left", padx=(6, 0))
         self._update_par_tools()
 
     def _update_header_tags(self):

@@ -1,9 +1,10 @@
-"""Small windows: tooltips, the Speakers window, and the speaker-count and Export dialogs."""
+"""Small windows: tooltips, the Speakers window, the speaker-count and Export dialogs, the
+list of shortcuts, and Settings."""
 
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import export, playback
+from . import export, playback, transcribe
 from .export import fmt_time
 from .theme import ACCENT, BG, BORDER, BORDER_STRONG, FONTS, MUTED, TEXT, TEXT2
 
@@ -43,7 +44,10 @@ def tip_window(widget, title, text, x, y):
 
 
 class Tooltip:
-    """A small pop-up that appears while the mouse is over a widget."""
+    """A small pop-up that appears while the mouse is over a widget, unless hover hints are
+    turned off in Settings (Tooltip.enabled)."""
+
+    enabled = True
 
     def __init__(self, widget, title, text):
         self.widget, self.title, self.text, self.tip = widget, title, text, None
@@ -51,7 +55,7 @@ class Tooltip:
         widget.bind("<Leave>", self.hide, add="+")
 
     def show(self, _event=None):
-        if self.tip is not None:
+        if self.tip is not None or not Tooltip.enabled:
             return
         text = self.text() if callable(self.text) else self.text
         w = self.widget
@@ -278,6 +282,86 @@ def ask_speaker_count(parent, title, message, action):
     box.focus_set()
     parent.wait_window(win)
     return "n" in result, result.get("n")
+
+
+def shortcuts_window(app, shortcuts):
+    """Every correction-panel shortcut: shortcuts is [(keys, what they do, ...)]. One window
+    at a time; asking again brings it to the front."""
+    win = app._shortcuts_win
+    if win is not None and win.winfo_exists():
+        win.deiconify()
+        win.lift()
+        return
+    win = app._shortcuts_win = make_dialog(app.root, "Shortcuts")
+    grid = tk.Frame(win, bg=BG)
+    grid.pack(fill="x")
+    for r, (keys, action, *_) in enumerate(shortcuts):
+        tk.Label(grid, text=keys, font=FONTS["header"], fg=TEXT, bg=BG).grid(
+            row=r, column=0, sticky="w", padx=(0, 16), pady=2)
+        tk.Label(grid, text=action, font=FONTS["body"], fg=TEXT2, bg=BG).grid(
+            row=r, column=1, sticky="w", pady=2)
+    tk.Label(win, text="The keys work while you're typing in the text box.", font=FONTS["small"],
+             fg=MUTED, bg=BG).pack(anchor="w", pady=(10, 0))
+    ttk.Button(win, text="Close", command=win.destroy).pack(anchor="e", pady=(10, 0))
+    win.bind("<Escape>", lambda e: win.destroy())
+    show_dialog(win, app.root)
+    win.focus_set()
+
+
+DEFAULT_MIC = "System default"
+
+
+def settings_window(app):
+    """Settings: the microphone, hover hints, and the fillers default for Export. Changes
+    apply and are saved straight away (App.change_setting). One window at a time."""
+    win = app._settings_win
+    if win is not None and win.winfo_exists():
+        win.deiconify()
+        win.lift()
+        return
+    win = app._settings_win = make_dialog(app.root, "Settings")
+    wrap = int(340 * _scale(win))
+    tk.Label(win, text="Settings", font=FONTS["header"], fg=TEXT, bg=BG,
+             anchor="w").pack(fill="x", pady=(0, 10))
+
+    def note(text):
+        tk.Label(win, text=text, font=FONTS["small"], fg=MUTED, bg=BG, anchor="w",
+                 justify="left", wraplength=wrap).pack(fill="x", pady=(2, 0))
+
+    row = tk.Frame(win, bg=BG)
+    row.pack(fill="x")
+    tk.Label(row, text="Microphone", font=FONTS["body"], fg=TEXT2, bg=BG).pack(side="left")
+    mic_box = ttk.Combobox(row, style="Subtle.TCombobox", state="readonly",
+                           font=FONTS["dropdown"], width=34)
+    mic_box.configure(postcommand=lambda: mic_box.configure(   # fresh each time it opens
+        values=[DEFAULT_MIC] + [n for _, n in transcribe.input_devices()]))
+    mic_box.set(app.settings["microphone"] or DEFAULT_MIC)
+    mic_box.pack(side="left", padx=(8, 0))
+
+    def on_mic(_event=None):
+        mic_box.selection_clear()
+        label = mic_box.get()
+        app.change_setting("microphone", None if label == DEFAULT_MIC else label)
+    mic_box.bind("<<ComboboxSelected>>", on_mic)
+    note("What live mode records from. A microphone or headset plugged in after diemut "
+         "started shows up here too. A change takes effect at the next Start.")
+
+    for key, label, text in (
+            ("hover_hints", "Show hover hints",
+             "Short explanations when the mouse rests on a button or box."),
+            ("leave_out_fillers", "Leave out fillers and false starts when exporting",
+             "Whether Export starts with this ticked. The transcript always keeps them.")):
+        var = tk.BooleanVar(value=app.settings[key])
+        ttk.Checkbutton(win, text=label, variable=var,
+                        command=lambda k=key, v=var: app.change_setting(k, v.get())).pack(
+            anchor="w", pady=(14, 0))
+        note(text)
+
+    ttk.Button(win, text="Close", style="Accent.TButton", command=win.destroy).pack(
+        anchor="e", pady=(16, 0))
+    win.bind("<Escape>", lambda e: win.destroy())
+    show_dialog(win, app.root)
+    win.focus_set()
 
 
 def export_dialog(app):

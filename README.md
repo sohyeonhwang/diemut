@@ -149,12 +149,12 @@ On Windows, `~` means `C:\Users\<your name>`. After these downloads, `diemut` wo
 
 ## Using diemut
 
-**Start screen.** Choose the **STT model** and **Language**, then pick a mode. Hover over the model names under the title to see what each one does. For files, you can also choose how many **Speakers** there are, if you know; this makes the speaker labels more accurate. Leave it at *Not sure* and `diemut` counts them, or choose *1 person* to skip speaker labelling. Live recordings ask after you press Stop. For live mode, choose the **Microphone** to record from; *System default* is the one your computer uses. A headset plugged in after `diemut` started shows up in the list too.
+**Start screen.** Choose the **STT model** and **Language**, then pick a mode. Hover over the model names under the title to see what each one does. For files, you can also choose how many **Speakers** there are, if you know; this makes the speaker labels more accurate. Leave it at *Not sure* and `diemut` counts them, or choose *1 person* to skip speaker labelling. Live recordings ask after you press Stop. For live mode, the microphone is chosen in **Settings**.
 
 **Live from microphone**
 This *won't* capture audio coming from your laptop/machine, so note that you can't live transcribe, say, a video call. It is better to record that with another software and upload the audio to `diemut` from file. 
 
-1. Click **Start** and speak. (If the microphone you chose has been unplugged, `diemut` asks whether to use the system default.) Text appears a few seconds behind you, after each natural pause.
+1. Click **Start** and speak. It records from the microphone chosen in **Settings** (the system default, unless you change it). (If the microphone you chose has been unplugged, `diemut` asks whether to use the system default.) Text appears a few seconds behind you, after each natural pause.
 2. **Pause** stops listening without ending the session; **Resume** carries on. Timestamps keep counting in real time while paused.
 3. **Stop** ends the session and transcribes your last few words. **Export… → Audio (.mp3)** then saves the recording. Paused stretches are kept as silence, so times in the audio match the transcript.
 4. Live mode doesn't label speakers while you record. After **Stop**, **Find speakers…** asks how many people spoke (or *Not sure*) and labels the recording, just as for a file.
@@ -170,32 +170,33 @@ This *won't* capture audio coming from your laptop/machine, so note that you can
 ![The correction panel: a paragraph open below the transcript, with some words selected and the matching stretch highlighted on its waveform](docs/correct.png)
 
 - As the audio plays, the word being spoken has a **faint yellow highlight** in the text box. It follows your corrections too: words you haven't changed keep their exact timing, and new or changed words are fitted in between.
-- **▶ Play / ‖ Pause** plays the paragraph from the red playhead. Pausing keeps your place, and Play carries on from there.
+- **▶ / ❚❚** plays or pauses the paragraph from the red playhead. Pausing keeps your place, and ▶ carries on from there. The audio bar shows the stretch's start and end times along its bottom. Hover over a button to see what it does.
 - **Select some words** in the text box and press **Ctrl+Space** to hear just those words, from half a second before to half a second after. The matching stretch is tinted on the audio bar.
 - **Click the audio bar** to play from that point. **Drag across it** to play a stretch; the words in that stretch are highlighted in the text.
 - **Double-click a word** in the text box to select it and move the playhead to the start of that word. If audio is playing, it carries on from there; otherwise it waits for Play (which then plays the selected word).
 - **Ctrl+Alt+click** (Ctrl+Option+click on a Mac) moves the playhead to exactly where you click: part-way into a word, or the start of the next word if you click between words. Any selected words are deselected, so Play starts from there. It works in the text box, and in the transcript above too, where it opens that paragraph with the playhead at the spot you clicked. If audio is playing, it carries on from there.
-- **⟲ 3 s** jumps back three seconds and keeps playing.
+- **⟲ / ⟳** jump back or forward three seconds and keep playing.
 - **Loop** repeats the selected words or stretch (or the whole paragraph, if nothing is selected) until you pause.
 - **Speed** plays at 0.5×, 0.75×, 1×, 1.25× or 1.5×. Voices keep their normal pitch at every speed.
-- Type your correction in the text box. **Ctrl+Enter** saves it, and **Esc** discards your changes.
+- Type your correction in the text box, under **Edit text**. Once it differs from the transcript, *Unsaved changes* shows above the box until you save. **Ctrl+Enter** saves it, and **Esc** discards your changes.
 - **Speaker** (when there are speaker labels) moves the paragraph to another speaker, or to a *New speaker*. If you **select some words first**, the label changes to *Selection* and only those words move; the paragraph splits where the speaker changes.
 - Press **Enter** in the text box to split the paragraph there.
-- **◀ Prev / Next ▶** step through the transcript paragraph by paragraph and save as you go. **Done** saves and closes the panel.
+- **▲ / ▼** step through the transcript paragraph by paragraph and save as you go. **✕** saves and closes the panel.
+- The main shortcuts are listed under the text box; **More** opens the full list.
 
 Keyboard shortcuts, which all work while you're typing in the text box:
 
 | Keys | Action |
 |---|---|
 | Ctrl+Space | Play or pause (just the selected words, if any are selected) |
-| Alt+← | Back 3 seconds |
+| Alt+← / Alt+→ | Back / forward 3 seconds |
 | Ctrl+L | Loop on or off |
 | Ctrl+↓ / Ctrl+↑ | Slower / faster |
 | Double-click a word | Select it and move the playhead to its start |
 | Ctrl+Alt+click (Ctrl+Option+click on a Mac) | Move the playhead to exactly that spot (also in the transcript) |
 | Enter | Split the paragraph at the cursor |
 | Ctrl+Enter | Save the correction |
-| Esc | Discard your changes |
+| Esc | Discard your changes and close the panel |
 
 Corrections carry over to every export format. Words you didn't change keep their exact timings, and new or corrected words are fitted into the time between the words around them, so subtitle timing stays accurate. Deleting all the text in a paragraph removes it.
 
@@ -218,9 +219,16 @@ The window stays usable while speakers are being found, and **Cancel** stops str
 
 **Exporting.** Click **Export…** and choose *Text (.txt)*, *Subtitles (.vtt)* or *Word (.docx)*. In the same box, **Timestamps** sets the times in `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels), *Each paragraph*, or *None*. `.vtt` subtitles always have times. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
 
-**Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, tick **Leave out fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
+**Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, tick **Leave out fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. To have it ticked every time, turn it on in **Settings**. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
 
 **Clear** removes the transcript from the window. `diemut` warns you before discarding a transcript you haven't exported.
+
+**Settings** (the pink ⚙ at the bottom right of every screen). Changes apply straight away and are remembered the next time you open `diemut`:
+- **Microphone**: what live mode records from. *System default* is the one your computer uses. A headset plugged in after `diemut` started shows up in the list too. A change takes effect at the next **Start**.
+- **Show hover hints**: the short explanations that appear when the mouse rests on a button or box.
+- **Leave out fillers and false starts when exporting**: whether the Export dialog starts with that box ticked.
+
+They're saved in `settings.json` in `~/.cache/diemut` (or `$DIEMUT_HOME`), next to the speaker models.
 
 ## Choosing a model
 
@@ -316,12 +324,12 @@ For a lab that shares one powerful machine:
 
 ### Settings, and other models
 
-A settings window for choosing and adding models without editing code:
+More in the Settings window, for choosing and adding models without editing code:
 - Pick the speech-to-text model, the speaker-labelling engine, the device (CPU/GPU) and the CPU thread count.
 - Load custom or fine-tuned Whisper models from a folder or a Hugging Face model name.
 - Offer pyannote as a more accurate speaker-labelling option, for people willing to install PyTorch and use a free Hugging Face token. It still runs locally.
 - Engines as plug-ins: each model is a small file that declares what it does and whether it is local, so the interface, including the "Fully local" label, updates automatically.
-- Per-person saved settings, plus optional lab-wide defaults such as the shared model folder.
+- Optional lab-wide defaults, such as the shared model folder.
 
 ### Other improvements
 

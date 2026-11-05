@@ -16,6 +16,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from . import settings
+
 # --------------------------------------------------------------------------- #
 # Settings
 # --------------------------------------------------------------------------- #
@@ -26,7 +28,7 @@ SENTENCE_ENDS = (".", "?", "!", "。", "？", "！")
 # Speaker clustering threshold. Higher = fewer speakers, lower = more.
 SPEAKER_THRESHOLD = 0.85
 
-MODEL_DIR = Path(os.environ.get("DIEMUT_HOME", Path.home() / ".cache" / "diemut")) / "models"
+MODEL_DIR = settings.HOME / "models"
 _RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 SEGMENTATION_URL = f"{_RELEASES}/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
 SEGMENTATION_FILE = MODEL_DIR / "sherpa-onnx-pyannote-segmentation-3-0" / "model.onnx"
