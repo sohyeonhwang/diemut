@@ -12,7 +12,7 @@ Everything runs locally. Your audio never leaves your computer; the only interne
 |---|---|---|
 | ![Start screen](docs/start.png) | ![A finished file transcript with speaker labels](docs/file.png) | ![Live transcription while recording](docs/live.png) |
 
-*(Screenshots show* `diemut` *with Windows' fonts, Segoe UI and Consolas. On macOS and Linux it looks much the same but uses your system's fonts.)*
+*(Simulated screenshots show* `diemut` *with Windows' fonts, Segoe UI and Consolas. On macOS and Linux it looks much the same but uses your system's fonts. Note these are not real transcripts, they're made up.)*
 
 ## What it does
 
