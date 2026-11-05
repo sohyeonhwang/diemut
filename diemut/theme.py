@@ -83,6 +83,9 @@ def setup_style(root):
                     indicatorbackground=BG, indicatorforeground=ACCENT)
     style.map("TRadiobutton", background=[("active", BG)],
               foreground=[("disabled", MUTED)])
+    style.configure("TCheckbutton", background=BG, foreground=TEXT, focuscolor=BG,
+                    indicatorbackground=BG, indicatorforeground=ACCENT)
+    style.map("TCheckbutton", background=[("active", BG)], foreground=[("disabled", MUTED)])
     style.configure("Subtle.TCombobox", fieldbackground=BG, background=BG,
                     foreground=MUTED, bordercolor=BORDER, lightcolor=BG, darkcolor=BG,
                     arrowcolor=MUTED, padding=(6, 2))

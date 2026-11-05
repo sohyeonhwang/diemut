@@ -316,10 +316,15 @@ def export_dialog(app):
     ts_note = tk.Label(win, text="", font=FONTS["small"], fg=MUTED, bg=BG, anchor="w",
                        justify="left", wraplength=int(300 * app._scale))
     ts_note.pack(fill="x", pady=(4, 0))
+    leave_out = tk.BooleanVar(value=app.leave_out_fillers)
+    leave_out_box = ttk.Checkbutton(win, text="Leave out fillers (um, uh…) and false starts",
+                                    variable=leave_out)
+    leave_out_box.pack(anchor="w", pady=(10, 0))
 
     def on_kind(*_):
         k = kind.get()
         ts_box.configure(state="readonly" if k in ("txt", "docx") else "disabled")
+        leave_out_box.configure(state="disabled" if k == "mp3" else "normal")
         turns = ("Each speaker turn: one time when the speaker changes (on every "
                  "paragraph, without speaker labels).")
         ts_note.configure(text={
@@ -335,6 +340,7 @@ def export_dialog(app):
         app.export_kind = kind.get()
         app.ts_mode = next(t for t, label in app.ts_labels.items()
                             if label == ts_box.get())
+        app.leave_out_fillers = leave_out.get()
         win.destroy()
         app.export(app.export_kind)
 

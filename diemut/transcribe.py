@@ -36,6 +36,17 @@ MODEL_DESCRIPTIONS = {
     "large-v3": "The most accurate Whisper model; slow without a GPU.",
 }
 
+# Whisper tends to tidy speech up, dropping "um"s and false starts. Starting it off with a
+# verbatim example makes it keep them (tested on a recording: twice as many fillers kept,
+# and false starts marked with a dash, which fillers.py relies on). English only for now:
+# an English example could pull other languages towards English.
+VERBATIM_PROMPT = "Um, so, uh, I- I was thinking, hmm, that we, uh, we could go there."
+
+
+def _verbatim_prompt(language):
+    return VERBATIM_PROMPT if language == "en" else None
+
+
 # Live mode: audio is collected until there's a short pause after at least
 # LIVE_MIN_SECONDS, or until LIVE_MAX_SECONDS is reached.
 LIVE_MIN_SECONDS = 3.0
@@ -239,16 +250,18 @@ def _label_speakers(audio_path, pieces, num_speakers, emit, stop_event):
 def _transcribe_words(model, audio, duration, language, emit, stop_event):
     emit("stage", "transcribing")
     emit("status", "Transcribing…")
-    segments, info = model.transcribe(
+    if language == AUTO:   # find the language first: the verbatim prompt is for English only
+        language, _, _ = model.detect_language(audio)
+        emit("language", language)
+    segments, _ = model.transcribe(
         audio,
-        language=None if language in (AUTO, MULTI) else language,
+        language=None if language == MULTI else language,
         multilingual=(language == MULTI),
         beam_size=5,
         vad_filter=True,
         word_timestamps=True,
+        initial_prompt=_verbatim_prompt(language),
     )
-    if language == AUTO:
-        emit("language", info.language)
     words = []
     for seg in segments:
         if stop_event.is_set():
@@ -355,10 +368,13 @@ def live_worker(stt, model_name, language, emit, stop_event, pause_event):
 
 
 def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
+    # The verbatim example (English only) first, then what was said just before
+    prompt = " ".join(p for p in (_verbatim_prompt(state["language"]), state["prompt"]) if p)
+
     def run():
         segments, info = state["model"].transcribe(
             audio, language=state["language"], beam_size=1, vad_filter=True,
-            condition_on_previous_text=False, initial_prompt=state["prompt"] or None,
+            condition_on_previous_text=False, initial_prompt=prompt or None,
             word_timestamps=True)
         return list(segments), info
 

@@ -4,7 +4,7 @@
 
 Everything runs locally. Your audio never leaves your computer; the only internet use is downloading the models the first time you need them.
 
-**Disclaimer:** Other than my snail drawing, this was basically fully vibe-coded with Claude!
+**AI Disclosure:** Other than my snail drawing, this was basically fully vibe-coded with Claude!
 
 **Fun fact:** "Diemut" is one way of latinizing "[Diemoth](https://en.wikipedia.org/wiki/Diemoth)," which was the name of a medieval scribe in Upper Bavaria, Germany (~11th century). I chose it semi-randomly from the English Wikipedia list of [medieval European scribes](https://en.wikipedia.org/wiki/Category:Medieval_European_scribes). 
 
@@ -215,6 +215,8 @@ Splits and merges carry over to `.txt` and `.docx`. To copy text from the transc
 The window stays usable while speakers are being found, and **Cancel** stops straight away.
 
 **Exporting.** Click **Export…** and choose *Text (.txt)*, *Subtitles (.vtt)* or *Word (.docx)*. In the same box, **Timestamps** sets the times in `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels), *Each paragraph*, or *None*. `.vtt` subtitles always have times. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
+
+**Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, tick **Leave out fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
 
 **Clear** removes the transcript from the window. `diemut` warns you before discarding a transcript you haven't exported.
 

@@ -5,6 +5,8 @@ ParagraphsMixin is part of App (see ui.py) and uses its state: pieces, _pars, se
 the Merge button, and the correction panel's methods.
 """
 
+from . import fillers
+
 
 class ParagraphsMixin:
     """Merge mode, the right-click menu and clicks in the transcript, as part of App."""
@@ -312,6 +314,16 @@ class ParagraphsMixin:
                 p = self.pieces[i]
                 return p["start"] + (p["end"] - p["start"]) * max(0, offset - c0) / max(1, c1 - c0)
         return self.pieces[par["i1"] - 1]["end"]
+
+    def _grey_fillers(self):
+        """Show fillers and false starts in grey all through the transcript."""
+        t = self.text
+        drop = fillers.removable(self.pieces)
+        for k, par in enumerate(self._pars):
+            ranges = t.tag_ranges(f"ptext:{k}")
+            for i, c0, c1 in self._piece_spans(par) if ranges else ():
+                if i in drop:
+                    t.tag_add("filler", f"{ranges[0]} + {c0} chars", f"{ranges[0]} + {c1} chars")
 
     def _par_at_piece(self, i):
         """The paragraph holding piece i (or the next one, if i is past its end)."""

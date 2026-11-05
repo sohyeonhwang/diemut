@@ -12,7 +12,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import export, playback, speakers, transcribe
+from . import export, fillers, playback, speakers, transcribe
 from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_speaker_count, count_label,
                       export_dialog, SpeakersWindow, Tooltip)
 from .editor import SEEK_BINDING, EditorMixin
@@ -377,6 +377,7 @@ class App(EditorMixin, ParagraphsMixin):
         self.ts_labels = {"turns": "Each speaker turn", "paragraphs": "Each paragraph",
                           "none": "None"}
         self.ts_mode = "turns"        # remembered between exports
+        self.leave_out_fillers = False  # Export: leave out um, uh… and false starts
         self.export_kind = "txt"
 
         bottom = tk.Frame(screen, bg=BG)
@@ -392,6 +393,9 @@ class App(EditorMixin, ParagraphsMixin):
         scroll.pack(side="right", fill="y")
         self.text.pack(side="left", fill="both", expand=True)
         self.text.tag_configure("ts", font=FONTS["mono"], foreground=MUTED)
+        # Fillers and false starts, which Export can leave out (before "selected", so the open
+        # paragraph's white-on-black still wins)
+        self.text.tag_configure("filler", foreground=MUTED)
         self.text.tag_configure("speaker", font=FONTS["speaker"], foreground=TEXT)
         self.text.tag_configure("pencil", font=FONTS["small"], foreground=MUTED)
         self.text.tag_configure("para", spacing3=8)
@@ -804,6 +808,7 @@ class App(EditorMixin, ParagraphsMixin):
             self._r = {"prev": self.pieces[-1],
                        "par_len": len(t.get("end-1c linestart", "end-1c"))}
         t.configure(state="disabled", cursor=self._text_cursor())
+        self._grey_fillers()
         self._show_open_paragraph(scroll=False)
         self._draw_checks()
         self._update_par_tools()
@@ -827,7 +832,9 @@ class App(EditorMixin, ParagraphsMixin):
             r["par_len"] = 0
         else:
             text = piece["text"]
-        t.insert("end-1c", text, "para")
+        word = text.lstrip()
+        t.insert("end-1c", text[:len(text) - len(word)], "para")
+        t.insert("end-1c", word, ("para", "filler") if fillers.is_filler(word) else "para")
         r["par_len"] += len(text)
         r["prev"] = piece
         t.configure(state="disabled")
@@ -1050,11 +1057,13 @@ class App(EditorMixin, ParagraphsMixin):
             self.status_lbl.configure(text=f"Saved {os.path.basename(path)}")
             return
         use_speakers = self.speaker_count > 1
+        pieces = (fillers.leave_out(self.pieces, use_speakers) if self.leave_out_fillers
+                  else self.pieces)
         try:
             if kind == "txt":
-                export.export_txt(path, self.pieces, self.names, use_speakers, self._timestamps())
+                export.export_txt(path, pieces, self.names, use_speakers, self._timestamps())
             elif kind == "vtt":
-                export.export_vtt(path, self.pieces, self.names, use_speakers)
+                export.export_vtt(path, pieces, self.names, use_speakers)
             else:
                 lang = (language_name(self.detected_language) + " (detected)"
                         if self.language == AUTO and self.detected_language
@@ -1065,7 +1074,7 @@ class App(EditorMixin, ParagraphsMixin):
                         f"Language: {lang}"]
                 if self.speaker_count:
                     meta.append(f"Speakers: {self.speaker_count}")
-                export.export_docx(path, self.pieces, self.names, use_speakers, self._timestamps(),
+                export.export_docx(path, pieces, self.names, use_speakers, self._timestamps(),
                                    f"Transcript – {base}", meta)
         except Exception as exc:
             messagebox.showerror("Export failed", f"diemut couldn't save the file.\n\n{exc}")
