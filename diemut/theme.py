@@ -9,6 +9,7 @@ from tkinter import ttk
 WINDOWS = sys.platform == "win32"
 MIC_ICON = "◉"
 FILE_ICON = "▤"
+SETTINGS_ICON = "⚙"     # an old symbol (not an emoji), so it renders everywhere
 LOCK = "🔒 " if WINDOWS else ""
 
 BG = "#ffffff"
@@ -51,7 +52,7 @@ def setup_style(root):
         dropdown=font(9), title=font(20, "bold"), card_title=font(12, "bold"),
         icon=font(22), mono=font(9, fam=mono), tag=font(9, fam=mono),
         card_title_mono=font(12, "bold", fam=mono),
-        text=font(11), speaker=font(11, "bold"), header=font(10, "bold"),
+        text=font(11), speaker=font(11, "bold"), header=font(10, "bold"), symbol=font(12),
     )
 
     style = ttk.Style()
@@ -73,6 +74,9 @@ def setup_style(root):
               bordercolor=[("disabled", BORDER), ("selected", ACCENT)],
               lightcolor=[("selected", BORDER), ("active", HOVER)],
               darkcolor=[("selected", BORDER), ("active", HOVER)])
+    # A button that is just a symbol, in pink so it stands out (⚙ Settings)
+    style.configure("Icon.TButton", foreground=DANGER, font=FONTS["symbol"], padding=(6, 0))
+    style.map("Icon.TButton", foreground=[("disabled", MUTED)])
     # Accent buttons, for actions (Start, Export…, Merge…): accent fill, darker on hover
     fill = [("disabled", BG), ("pressed", shade(ACCENT, 0.8)), ("active", shade(ACCENT, 0.9))]
     style.configure("Accent.TButton", background=ACCENT, foreground=TEXT, focuscolor=ACCENT,
