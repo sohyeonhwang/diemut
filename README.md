@@ -12,7 +12,7 @@ Everything runs locally. Your audio never leaves your computer; the only interne
 |---|---|---|
 | ![Start screen](docs/start.png) | ![A finished file transcript with speaker labels](docs/file.png) | ![Live transcription while recording](docs/live.png) |
 
-*(Screenshots were taken on Linux. On Windows and macOS,* `diemut` *looks much the same but uses your system's fonts.)*
+*(Screenshots show* `diemut` *with Windows' fonts, Segoe UI and Consolas. On macOS and Linux it looks much the same but uses your system's fonts.)*
 
 ## What it does
 
@@ -28,6 +28,35 @@ Under the hood, `diemut` uses two models:
 - **`sherpa-onnx`** for speaker labels.
 
 Paragraph breaks don't come from a model. `diemut` starts a new paragraph when there's a pause of more than 1.5 seconds between words (using Whisper's word timings), when the speaker changes, or at the end of a sentence once a paragraph passes about 600 characters. You can split and merge paragraphs yourself, too. The two settings are `PARAGRAPH_PAUSE` and `PARAGRAPH_SOFT_MAX` in `diemut/speakers.py`.
+
+---
+
+## Setup on Linux (Ubuntu/Debian)
+
+```bash
+sudo apt install python3-venv python3-tk libportaudio2
+git clone https://github.com/sohyeonhwang/diemut.git
+cd diemut
+python3 -m venv .venv
+source .venv/bin/activate
+pip install .
+diemut
+```
+
+## Setup on macOS
+
+1. Install **Python 3.14** (not 3.15 yet) from [python.org/downloads/macos](https://www.python.org/downloads/macos/). Use the python.org installer: it includes the window toolkit `diemut` needs, which Homebrew's Python sometimes doesn't.
+2. Get `diemut` (with `git clone` as in the Linux steps above, or the ZIP as in the Windows steps below), then open **Terminal** in the `diemut` folder.
+3. Install and run:
+   ```bash
+   python3.14 -m venv .venv
+   source .venv/bin/activate
+   pip install .
+   diemut
+   ```
+4. The first time you use live mode, macOS asks whether Terminal may use the microphone. Click **Allow**. If you missed it, go to **System Settings → Privacy & Security → Microphone** and turn on Terminal.
+
+To run it again later: `cd` into the folder, run `source .venv/bin/activate`, then `diemut`.
 
 ---
 
@@ -102,35 +131,6 @@ Open PowerShell and run:
 ```powershell
 cd $HOME\code\diemut
 .venv\Scripts\Activate.ps1
-diemut
-```
-
----
-
-## Setup on macOS
-
-1. Install **Python 3.14** (not 3.15 yet) from [python.org/downloads/macos](https://www.python.org/downloads/macos/). Use the python.org installer: it includes the window toolkit `diemut` needs, which Homebrew's Python sometimes doesn't.
-2. Get `diemut` (with `git clone` or the ZIP, as in the Windows steps above), then open **Terminal** in the `diemut` folder.
-3. Install and run:
-   ```bash
-   python3.14 -m venv .venv
-   source .venv/bin/activate
-   pip install .
-   diemut
-   ```
-4. The first time you use live mode, macOS asks whether Terminal may use the microphone. Click **Allow**. If you missed it, go to **System Settings → Privacy & Security → Microphone** and turn on Terminal.
-
-To run it again later: `cd` into the folder, run `source .venv/bin/activate`, then `diemut`.
-
-## Setup on Linux (Ubuntu/Debian)
-
-```bash
-sudo apt install python3-venv python3-tk libportaudio2
-git clone https://github.com/sohyeonhwang/diemut.git
-cd diemut
-python3 -m venv .venv
-source .venv/bin/activate
-pip install .
 diemut
 ```
 
