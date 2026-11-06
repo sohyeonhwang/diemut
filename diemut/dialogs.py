@@ -555,7 +555,7 @@ DEFAULT_MIC = "System default"
 
 
 def settings_window(app):
-    """Settings: the microphone, hover hints, and the fillers default for Export. Changes
+    """Settings: the microphone, hover hints and the button icons. Changes
     apply and are saved straight away (App.change_setting). One window at a time."""
     win = app._settings_win
     if win is not None and win.winfo_exists():
@@ -589,19 +589,15 @@ def settings_window(app):
     note("What live mode records from. A microphone or headset plugged in after diemut "
          "started shows up here too. A change takes effect at the next Start.")
 
-    # (setting, label, note, ticked means the setting is off): like Export's boxes, ticking
-    # the fillers one means keeping them
-    for key, label, text, flip in (
+    for key, label, text in (
             ("hover_hints", "Show hover hints",
-             "Short explanations when the mouse rests on a button or box.", False),
-            ("leave_out_fillers", "Include fillers and false starts when exporting",
-             "Whether Export starts with this ticked. The transcript always keeps them.", True),
+             "Short explanations when the mouse rests on a button or box."),
             ("hand_drawn_icons", "Hand-drawn icons",
-             "The ink drawings on buttons. Untick for plain symbols.", False)):
-        var = tk.BooleanVar(value=app.settings[key] != flip)
+             "The ink drawings on buttons. Untick for plain symbols.")):
+        var = tk.BooleanVar(value=app.settings[key])
         ttk.Checkbutton(win, text=label, variable=var,
-                        command=lambda k=key, v=var, f=flip: app.change_setting(k, v.get() != f)
-                        ).pack(anchor="w", pady=(14, 0))
+                        command=lambda k=key, v=var: app.change_setting(k, v.get())).pack(
+            anchor="w", pady=(14, 0))
         note(text)
 
     ttk.Button(win, text="Close", style="Accent.TButton", command=win.destroy).pack(

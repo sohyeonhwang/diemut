@@ -329,7 +329,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         """Settings (the settings icon, or ⚙), at the bottom right of each screen."""
         button = ttk.Button(parent, style="Icon.TButton", command=lambda: settings_window(self))
         self._show_icon(button, "settings", SETTINGS_ICON)
-        Tooltip(button, "Settings", "The microphone, hover hints, and what Export starts with.")
+        Tooltip(button, "Settings", "The microphone, hover hints and button icons.")
         return button
 
     def _show_icon(self, widget, name, text, label=None, width=0, toggle=False):
@@ -364,8 +364,6 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         self.settings[key] = value
         if key == "hover_hints":
             Tooltip.enabled = value
-        elif key == "leave_out_fillers":
-            self.leave_out_fillers = value      # what Export starts with
         elif key == "microphone":
             self._update_header_tags()
         elif key == "hand_drawn_icons":
@@ -478,7 +476,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         self.ts_mode = "turns"        # remembered between exports
         self.include_ts = True        # Export's Timestamps box
         self.include_notes = True     # Export's Notes box
-        self.leave_out_fillers = self.settings["leave_out_fillers"]   # what Export starts with
+        self.leave_out_fillers = False   # Export's Fillers box (unticked: leave them out)
         self.export_kind = "txt"
 
         bottom = tk.Frame(screen, bg=BG)

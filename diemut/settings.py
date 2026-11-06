@@ -14,12 +14,10 @@ PATH = HOME / "settings.json"
 DEFAULTS = {
     "hover_hints": True,          # tooltips over buttons and boxes
     "microphone": None,           # live mode's microphone, by name; None: the system default
-    "leave_out_fillers": False,   # whether Export starts with "Leave out fillers…" ticked
     "panel_height": None,         # the correction panel's height (at 100% scaling); None: default
     "hand_drawn_icons": True,     # the ink icons on buttons; off: plain symbols
 }
-_TYPES = {"hover_hints": bool, "microphone": str, "leave_out_fillers": bool, "panel_height": int,
-          "hand_drawn_icons": bool}
+_TYPES = {"hover_hints": bool, "microphone": str, "panel_height": int, "hand_drawn_icons": bool}
 
 
 def _valid(key, value):
