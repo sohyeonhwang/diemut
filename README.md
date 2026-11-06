@@ -227,7 +227,7 @@ More in the Settings window, for choosing and adding models without editing code
 - Offer pyannote as a more accurate speaker-labelling option, for people willing to install PyTorch and use a free Hugging Face token. It still runs locally.
 - Engines as plug-ins: each model is a small file that declares what it does and whether it is local, so the interface, including the "Fully local" label, updates automatically.
 - Optional lab-wide defaults, such as the shared model folder.
-- Use Intel and AMD graphics cards and NPUs, not just NVIDIA ones: faster-whisper only supports NVIDIA (CUDA), so this needs a second Whisper engine, such as OpenVINO (Intel GPUs and NPUs) or ONNX Runtime with DirectML (most Windows GPUs).
+- AMD graphics cards (and Apple ones) too: whisper.cpp runs Whisper on most graphics cards through Vulkan (and Metal on Macs). Intel processors and graphics are covered by the optional OpenVINO engine.
 
 ### Other improvements
 

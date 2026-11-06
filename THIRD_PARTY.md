@@ -12,6 +12,7 @@ Please check each project's current license before redistributing diemut in a bu
 | pyannote segmentation-3.0 (ONNX conversion by sherpa-onnx) | Finding where each speaker turn starts and ends | github.com/k2-fsa/sherpa-onnx releases | MIT (CNRS) |
 | NVIDIA NeMo TitaNet-small (ONNX conversion by sherpa-onnx) | Telling voices apart | github.com/k2-fsa/sherpa-onnx releases | CC BY 4.0 (per NVIDIA's model card) |
 | Silero VAD (bundled with faster-whisper) | Skipping silence | github.com/snakers4/silero-vad | MIT |
+| OpenAI Whisper, Intel's OpenVINO conversions (optional) | Speech-to-text with the OpenVINO engine | huggingface.co/OpenVINO | MIT |
 
 ## App icon
 
@@ -28,4 +29,5 @@ diemut's icon (`diemut/assets/`) is drawing of a little snail I drew, inspired b
 | PyAV (and the FFmpeg libraries it bundles) | BSD-3-Clause (FFmpeg: LGPL) |
 | sounddevice / PortAudio | MIT |
 | python-docx | MIT |
+| OpenVINO, OpenVINO GenAI, OpenVINO Tokenizers (optional: `pip install ".[openvino]"`) | Apache 2.0 |
 | NumPy | BSD-3-Clause |

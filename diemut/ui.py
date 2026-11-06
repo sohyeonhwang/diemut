@@ -13,8 +13,8 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import (export, find, fillers, history, notes, playback, sessions, settings, speakers,
-               timing, transcribe)
+from . import (engines, export, find, fillers, history, notes, playback, sessions, settings,
+               speakers, timing, transcribe)
 from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_batch, ask_choice, ask_speaker_count,
                       count_label, export_dialog, settings_window, FindWindow, SpeakersWindow,
                       Tooltip)
@@ -44,7 +44,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
 
         self.ui_q = queue.Queue()
         self.session_id = 0
-        self.stt = transcribe.SpeechToText()
+        self.stt = None             # made once settings are loaded, below
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
 
@@ -57,6 +57,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         self.player = playback.Player()
         self.num_speakers = None    # how many people speak in the next file, if known
         self.settings = settings.load()    # remembered between launches (settings.py)
+        self.stt = transcribe.SpeechToText(self.settings["engine"])
         Tooltip.enabled = self.settings["hover_hints"]
         self._settings_win = None
         self._speakers_win = None
@@ -209,7 +210,8 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         self.model_tag = self._tag(tags, f"whisper-{self.model_name}")
         self.model_tag.pack(side="left")
         Tooltip(self.model_tag, "Speech-to-text",
-                lambda: f"OpenAI Whisper {self.model_name}, run locally with faster-whisper. "
+                lambda: f"OpenAI Whisper {self.model_name}, run locally with "
+                        f"{self._engine_name()}. "
                         f"{transcribe.MODEL_DESCRIPTIONS[self.model_name]}")
         tk.Label(tags, text="+", fg=MUTED, bg=BG, font=FONTS["body"]).pack(side="left", padx=5)
         tag = self._tag(tags, "sherpa-onnx")
@@ -289,10 +291,28 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         except Exception:
             return None   # a missing icon should never stop diemut from starting
 
-    def _model_label(self, name):
-        size = transcribe.model_size(name)
+    def _engine_name(self):
+        """The engine the next transcript will use, from Settings (engines.make; worked out
+        once per choice, since checking for OpenVINO imports it)."""
+        choice = self.settings["engine"]
+        if getattr(self, "_engine_for", (None,))[0] != choice:
+            self._engine_for = (choice, engines.make(choice).name)
+        return self._engine_for[1]
+
+    def _model_label(self, name, engine=None):
+        engine = engine or self._engine_name()
         note = next(n for m, _, n in transcribe.MODELS if m == name)
-        return f"faster-whisper • {name} ({size}{', ' + note if note else ''})"
+        # faster-whisper's download sizes are known; other engines' copies differ
+        size = transcribe.model_size(name) if engine == "faster-whisper" else ""
+        extra = ", ".join(x for x in (size, note) if x)
+        return f"{engine} • {name}" + (f" ({extra})" if extra else "")
+
+    def _refresh_model_box(self):
+        """The model list, named after the engine Settings will use."""
+        engine = self._engine_name()
+        self.model_labels = {self._model_label(n, engine): n for n, _, _ in transcribe.MODELS}
+        self.model_box.configure(values=list(self.model_labels))
+        self.model_box.set(self._model_label(self.model_name, engine))
 
     def _card(self, parent, icon, title, subtitle, command):
         card = tk.Frame(parent, bg=BG, highlightthickness=1, highlightbackground=BORDER_STRONG,
@@ -366,6 +386,9 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
             Tooltip.enabled = value
         elif key == "microphone":
             self._update_header_tags()
+        elif key == "engine":
+            self.stt.choose(value)
+            self._refresh_model_box()
         elif key == "hand_drawn_icons":
             for args in list(self._icon_widgets.values()):
                 self._show_icon(*args)
@@ -658,7 +681,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         self.session_model = self.model_name
         self.session_language = self.language
         self.detected_language = None
-        self.session_device = None  # where Whisper ran for this transcript ("cuda"/"cpu"), if known
+        self.session_device = None  # the engine and chip this transcript was made with, if known
         self.duration = None
         self.source_path = None
         self.session_start = dt.datetime.now()
@@ -920,7 +943,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
             lang = language_name(self.session_language)
         tags = [f"whisper-{self.session_model}", lang]
         if self.session_device:       # where it ran, when it was made in this session
-            tags.insert(1, "GPU" if self.session_device == "cuda" else "CPU")
+            tags.insert(1, self.session_device)       # e.g. "OpenVINO · GPU"
         n = self.speaker_count
         self.spk_btn.configure(text=f"{n} speaker{'s' if n > 1 else ''} ↗")
         self._layout_right()
@@ -930,11 +953,10 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         for t in tags:
             tag = self._tag(self.header_tags, t)
             tag.pack(side="left", padx=(6, 0))
-            if t in ("CPU", "GPU"):
-                Tooltip(tag, "Where Whisper ran", "On the graphics card (an NVIDIA one, with CUDA)."
-                        if t == "GPU" else
-                        "On the processor. diemut can only use NVIDIA graphics cards so far; other "
-                        "graphics cards and NPUs aren't supported yet.")
+            if t == self.session_device:
+                Tooltip(tag, "Where Whisper ran",
+                        "The speech-to-text engine, and whether it ran on the graphics card "
+                        "(GPU) or the processor (CPU). Choose the engine in Settings.")
 
     def _layout_right(self):
         """The buttons on the right of the row above the transcript, in order: Merge (once
@@ -1394,7 +1416,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         return sessions.make_state(self.mode, self.source_path, self.session_start,
                                    self.session_model, self.session_language,
                                    self.detected_language, self.duration, self.speaker_count,
-                                   self.names, self.pieces)
+                                   self.names, self.pieces, self.session_device)
 
     def open_session(self):
         """Open saved session ↗: one session, or several with a file list to switch between."""
@@ -1429,6 +1451,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         self.speaker_count = state.get("speaker_count") or len(self._speaker_ids())
         self.session_model = state.get("model") or self.model_name
         self.session_language = state.get("language") or AUTO
+        self.session_device = state.get("engine")      # e.g. "OpenVINO · GPU", if it was saved
         self.detected_language = state.get("detected_language")
         self.duration = state.get("duration")
         self.source_path = state.get("source")
@@ -1546,7 +1569,8 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
                         else language_name(self.session_language))
                 meta = [f"Source: {os.path.basename(self.source_path) if self.source_path else 'Live microphone'}",
                         f"Date: {self.session_start:%Y-%m-%d %H:%M}",
-                        f"STT model: whisper-{self.session_model} (faster-whisper)",
+                        f"STT model: whisper-{self.session_model}"
+                        + (f" ({self.session_device})" if self.session_device else ""),
                         f"Language: {lang}"]
                 if self.speaker_count:
                     meta.append(f"Speakers: {self.speaker_count}")

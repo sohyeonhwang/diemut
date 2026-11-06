@@ -16,8 +16,10 @@ DEFAULTS = {
     "microphone": None,           # live mode's microphone, by name; None: the system default
     "panel_height": None,         # the correction panel's height (at 100% scaling); None: default
     "hand_drawn_icons": True,     # the ink icons on buttons; off: plain symbols
+    "engine": "auto",             # speech-to-text engine: a key of engines.CHOICES
 }
-_TYPES = {"hover_hints": bool, "microphone": str, "panel_height": int, "hand_drawn_icons": bool}
+_TYPES = {"hover_hints": bool, "microphone": str, "panel_height": int, "hand_drawn_icons": bool,
+          "engine": str}
 
 
 def _valid(key, value):

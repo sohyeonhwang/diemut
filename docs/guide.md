@@ -161,6 +161,7 @@ While there are unsaved changes, `diemut` also keeps a recovery copy every 30 se
 
 The cog at the bottom right of every screen opens Settings. Changes apply straight away and are remembered the next time you open `diemut`:
 - **Microphone**: what live mode records from. *System default* is the one your computer uses. A headset plugged in after `diemut` started shows up in the list too. A change takes effect at the next **Start**.
+- **Speech-to-text engine**: *Automatic* (the default) picks the fastest one this computer can use: faster-whisper on an NVIDIA graphics card, otherwise OpenVINO if it's installed, otherwise faster-whisper on the processor. Or choose one yourself. See *Choosing a model* for adding OpenVINO.
 - **Show hover hints**: the short explanations that appear when the mouse rests on a button or box.
 - **Hand-drawn icons**: the ink drawings on the buttons. Untick it for plain symbols.
 
@@ -181,7 +182,17 @@ For languages other than English, the larger models are noticeably more accurate
 
 **Rough speed on a typical laptop CPU** for one hour of audio: small takes about 15–25 minutes, and large-v3 can take over an hour. Speaker labelling adds a few minutes. This varies a lot between computers.
 
-**GPU (optional):** if you have an NVIDIA graphics card with CUDA 12 and cuDNN 9 installed, `diemut` uses it automatically. If the GPU doesn't work, `diemut` quietly switches to the CPU. The tags at the top right of the transcript show which one it used (**GPU** or **CPU**) for a transcript made since `diemut` started. Other graphics cards (Intel, AMD) and NPUs can't be used yet.
+**GPU (optional):** if you have an NVIDIA graphics card with CUDA 12 and cuDNN 9 installed, `diemut` uses it automatically. If the GPU doesn't work, `diemut` quietly switches to the CPU.
+
+**Faster on Intel computers (optional):** on a computer with an Intel processor or Intel graphics (such as Intel Arc), the OpenVINO engine is several times faster: on one Intel Arc laptop, a recording transcribed at 22 times real time instead of 7. To add it, run this once in the `diemut` folder, with the virtual environment active, then restart `diemut`:
+
+```
+pip install -e ".[openvino]"
+```
+
+With **Speech-to-text engine** on *Automatic* (in **Settings**), `diemut` then uses it on its own: on the Intel graphics card if there is one, otherwise on the processor. The first time, it downloads Intel's copy of the model (about 250 MB for small), and the first load on the graphics card takes a little longer while it's prepared. If OpenVINO doesn't work, `diemut` uses faster-whisper instead.
+
+The tag at the top right of a transcript says which engine made it and where, such as **OpenVINO · GPU** or **faster-whisper · CPU** (for transcripts made since `diemut` started). AMD graphics cards and NPUs can't be used yet.
 
 ## Languages
 

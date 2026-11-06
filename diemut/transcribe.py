@@ -115,22 +115,40 @@ def _resample(x, src_rate, dst_rate):
 
 
 class SpeechToText:
-    """The speech-to-text engine in use (engines.py), with one model loaded and kept."""
+    """The speech-to-text engine in use (engines.py, chosen in Settings), with one model
+    loaded and kept."""
 
-    def __init__(self):
-        self.engine = engines.FasterWhisper()
+    def __init__(self, choice="auto"):
+        self.choice = choice
+        self.engine = None              # made on the first load, from choice
         self.lock = threading.Lock()
 
-    @property
-    def device(self):
-        return self.engine.device
+    def choose(self, choice):
+        """A new engine choice: used from the next load (a running job keeps its engine)."""
+        with self.lock:
+            if choice != self.choice:
+                self.choice, self.engine = choice, None
 
     def load(self, name, status):
-        """The engine, with model name loaded (status says so while it loads)."""
+        """The engine, with model name loaded (status says so while it loads). If an engine
+        other than faster-whisper fails to load, faster-whisper is used instead."""
         with self.lock:
+            if self.engine is None:
+                self.engine = engines.make(self.choice)
             if not self.engine.loaded(name):
-                status(f"Loading whisper-{name}… (the first use downloads {model_size(name)})")
-                self.engine.load(name)
+                first = (f"downloads {model_size(name)}"
+                         if isinstance(self.engine, engines.FasterWhisper) else "downloads it")
+                status(f"Loading whisper-{name} with {self.engine.name}… (the first use "
+                       f"{first})")
+                try:
+                    self.engine.load(name)
+                except Exception as exc:
+                    if isinstance(self.engine, engines.FasterWhisper):
+                        raise
+                    status(f"{self.engine.name} didn't load, so diemut is using "
+                           f"faster-whisper instead. ({exc})")
+                    self.engine = engines.FasterWhisper()
+                    self.engine.load(name)
             return self.engine
 
     def fall_back_to_cpu(self):
@@ -138,10 +156,10 @@ class SpeechToText:
 
 
 def _load(stt, model_name, emit):
-    """Load the model for a worker, and say where it runs ("device": "cuda" or "cpu").
-    Returns the engine (engines.py), ready to transcribe."""
+    """Load the model for a worker, and say which engine runs it where ("device":
+    e.g. "OpenVINO · GPU"). Returns the engine (engines.py), ready to transcribe."""
     model = stt.load(model_name, lambda m: emit("status", m))
-    emit("device", stt.device)
+    emit("device", model.label())
     return model
 
 

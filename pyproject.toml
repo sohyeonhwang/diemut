@@ -20,6 +20,10 @@ dependencies = [
     "numpy",
 ]
 
+[project.optional-dependencies]
+# A faster speech-to-text engine on Intel processors and graphics (engines.OpenVINO)
+openvino = ["openvino-genai>=2026.4"]
+
 [project.scripts]
 diemut = "diemut.__main__:main"
 

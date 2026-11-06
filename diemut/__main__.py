@@ -1,10 +1,15 @@
 """Start diemut:  `diemut`  or  `python -m diemut`."""
 
 import multiprocessing
+import os
 import sys
 
 
 def main():
+    # Hugging Face's notes about symlinks on Windows and sign-in limits only clutter the
+    # terminal: model downloads work without either
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
     # Speaker labelling runs in a separate process (see speakers.diarize).
     multiprocessing.freeze_support()
     if sys.platform == "win32":

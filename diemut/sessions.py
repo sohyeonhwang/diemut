@@ -34,9 +34,10 @@ _JSON, _FLAC, _PCM = "session.json", "audio.flac", "audio.pcm"
 
 
 def make_state(mode, source, started, model, language, detected_language, duration,
-               speaker_count, names, pieces):
+               speaker_count, names, pieces, engine=None):
     """Everything about a transcript that a session file keeps, except the audio. source: the
-    file's name (or None for live); started: a datetime."""
+    file's name (or None for live); started: a datetime; engine: what made it, e.g.
+    "OpenVINO · GPU" (older files don't have it)."""
     return {
         "mode": mode,
         "source": os.path.basename(source) if source else None,
@@ -48,6 +49,7 @@ def make_state(mode, source, started, model, language, detected_language, durati
         "speaker_count": speaker_count,
         "names": {str(k): v for k, v in names.items()},
         "pieces": pieces,
+        "engine": engine,
     }
 
 

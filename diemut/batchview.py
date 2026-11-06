@@ -159,7 +159,7 @@ class BatchMixin:
             model, language, _ = self._batch_job_settings
             state = sessions.make_state("file", item.source, job["started"], model, language,
                                         job["language"], job["duration"], job["speaker_count"],
-                                        {}, [dict(p) for p in job["pieces"]])
+                                        {}, [dict(p) for p in job["pieces"]], job.get("device"))
             sid, clip = self.batch.sid, job["audio"]
 
             def save():

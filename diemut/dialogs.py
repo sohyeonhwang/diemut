@@ -6,7 +6,7 @@ import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import find, playback, transcribe
+from . import engines, find, playback, transcribe
 from .export import fmt_time
 from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FONTS, MUTED, TEXT, TEXT2,
                     display_scale)
@@ -555,7 +555,8 @@ DEFAULT_MIC = "System default"
 
 
 def settings_window(app):
-    """Settings: the microphone, hover hints and the button icons. Changes
+    """Settings: the microphone, the speech-to-text engine, hover hints and the button
+    icons. Changes
     apply and are saved straight away (App.change_setting). One window at a time."""
     win = app._settings_win
     if win is not None and win.winfo_exists():
@@ -588,6 +589,30 @@ def settings_window(app):
     mic_box.bind("<<ComboboxSelected>>", on_mic)
     note("What live mode records from. A microphone or headset plugged in after diemut "
          "started shows up here too. A change takes effect at the next Start.")
+
+    # The speech-to-text engine (engines.py); OpenVINO's choices only once it's installed
+    row = tk.Frame(win, bg=BG)
+    row.pack(fill="x", pady=(14, 0))
+    tk.Label(row, text="Speech-to-text engine", font=FONTS["body"], fg=TEXT2,
+             bg=BG).pack(side="left")
+    installed = engines.openvino_installed()
+    choices = {k: v for k, v in engines.CHOICES.items()
+               if installed or not k.startswith("openvino")}
+    engine_box = ttk.Combobox(row, style="Subtle.TCombobox", state="readonly",
+                              font=FONTS["dropdown"], width=26, values=list(choices.values()))
+    engine_box.set(choices.get(app.settings["engine"], choices["auto"]))
+    engine_box.pack(side="left", padx=(8, 0))
+
+    def on_engine(_event=None):
+        engine_box.selection_clear()
+        app.change_setting("engine", next(k for k, v in choices.items()
+                                          if v == engine_box.get()))
+    engine_box.bind("<<ComboboxSelected>>", on_engine)
+    note("Automatic uses an NVIDIA graphics card with faster-whisper if there is one, "
+         "otherwise OpenVINO when it's installed (fastest on Intel processors and graphics), "
+         "otherwise faster-whisper. A change takes effect at the next file or Start."
+         + ("" if installed else " To add OpenVINO, run  pip install -e \".[openvino]\"  "
+                                 "in the diemut folder, then restart diemut."))
 
     for key, label, text in (
             ("hover_hints", "Show hover hints",
