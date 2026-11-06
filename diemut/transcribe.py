@@ -1,4 +1,4 @@
-"""Speech-to-text with faster-whisper: files and live microphone.
+"""Speech-to-text: files and live microphone, through the engine in engines.py.
 
 The workers here run in background threads and report back through
 emit(kind, payload). Kinds: "status", "progress", "stage", "language",
@@ -10,7 +10,7 @@ import threading
 
 import numpy as np
 
-from . import speakers
+from . import engines, speakers
 from .languages import AUTO, MULTI
 
 SAMPLE_RATE = 16000
@@ -114,54 +114,32 @@ def _resample(x, src_rate, dst_rate):
                      np.arange(len(x)), x).astype(np.float32)
 
 
-def _is_gpu_error(exc):
-    text = str(exc).lower()
-    return any(word in text for word in ("cuda", "cudnn", "cublas", "gpu"))
-
-
 class SpeechToText:
-    """Loads and caches one Whisper model. GPU if it works, otherwise CPU."""
+    """The speech-to-text engine in use (engines.py), with one model loaded and kept."""
 
     def __init__(self):
-        self.model = None
-        self.key = None
-        self.device = None
-        self.force_cpu = False
+        self.engine = engines.FasterWhisper()
         self.lock = threading.Lock()
 
+    @property
+    def device(self):
+        return self.engine.device
+
     def load(self, name, status):
-        from faster_whisper import WhisperModel
+        """The engine, with model name loaded (status says so while it loads)."""
         with self.lock:
-            key = (name, self.force_cpu)
-            if self.model is not None and self.key == key:
-                return self.model
-            self.model = None
-            status(f"Loading whisper-{name}… (the first use downloads {model_size(name)})")
-            attempts = [("cpu", "int8")]
-            if not self.force_cpu:
-                try:
-                    import ctranslate2
-                    if ctranslate2.get_cuda_device_count() > 0:
-                        attempts.insert(0, ("cuda", "float16"))
-                except Exception:
-                    pass
-            last_error = None
-            for device, compute_type in attempts:
-                try:
-                    self.model = WhisperModel(name, device=device, compute_type=compute_type)
-                    self.key, self.device = key, device
-                    return self.model
-                except Exception as exc:
-                    last_error = exc
-            raise last_error
+            if not self.engine.loaded(name):
+                status(f"Loading whisper-{name}… (the first use downloads {model_size(name)})")
+                self.engine.load(name)
+            return self.engine
 
     def fall_back_to_cpu(self):
-        self.force_cpu = True
-        self.model = None
+        self.engine.fall_back_to_cpu()
 
 
 def _load(stt, model_name, emit):
-    """Load the model for a worker, and say where it runs ("device": "cuda" or "cpu")."""
+    """Load the model for a worker, and say where it runs ("device": "cuda" or "cpu").
+    Returns the engine (engines.py), ready to transcribe."""
     model = stt.load(model_name, lambda m: emit("status", m))
     emit("device", stt.device)
     return model
@@ -189,7 +167,7 @@ def file_worker(stt, path, model_name, language, emit, stop_event, num_speakers=
                 words = _transcribe_words(model, audio, duration, language, emit, stop_event)
                 break
             except Exception as exc:
-                if attempt == 0 and stt.device == "cuda" and _is_gpu_error(exc):
+                if attempt == 0 and model.is_gpu_error(exc):
                     emit("reset", None)
                     emit("status", "The GPU didn't work, so diemut is switching to the CPU…")
                     stt.fall_back_to_cpu()
@@ -256,17 +234,10 @@ def _transcribe_words(model, audio, duration, language, emit, stop_event):
     emit("stage", "transcribing")
     emit("status", "Transcribing…")
     if language == AUTO:   # find the language first: the verbatim prompt is for English only
-        language, _, _ = model.detect_language(audio)
+        language = model.detect_language(audio)
         emit("language", language)
-    segments, _ = model.transcribe(
-        audio,
-        language=None if language == MULTI else language,
-        multilingual=(language == MULTI),
-        beam_size=5,
-        vad_filter=True,
-        word_timestamps=True,
-        initial_prompt=_verbatim_prompt(language),
-    )
+    segments, _ = model.transcribe(audio, None if language == MULTI else language,
+                                   _verbatim_prompt(language), multilingual=(language == MULTI))
     words = []
     for seg in segments:
         if stop_event.is_set():
@@ -407,23 +378,21 @@ def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
     prompt = " ".join(p for p in (_verbatim_prompt(state["language"]), state["prompt"]) if p)
 
     def run():
-        segments, info = state["model"].transcribe(
-            audio, language=state["language"], beam_size=1, vad_filter=True,
-            condition_on_previous_text=False, initial_prompt=prompt or None,
-            word_timestamps=True)
-        return list(segments), info
+        segments, detected = state["model"].transcribe(audio, state["language"], prompt or None,
+                                                      quick=True)
+        return list(segments), detected
 
     emit("pending", True)
     try:
         try:
-            segments, info = run()
+            segments, detected = run()
         except Exception as exc:
-            if stt.device != "cuda" or not _is_gpu_error(exc):
+            if not state["model"].is_gpu_error(exc):
                 raise
             emit("status", "The GPU didn't work, so diemut is switching to the CPU…")
             stt.fall_back_to_cpu()
             state["model"] = _load(stt, model_name, emit)
-            segments, info = run()
+            segments, detected = run()
             emit("status", "Listening… speak into your microphone.")
     finally:
         emit("pending", False)
@@ -438,6 +407,6 @@ def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
     if texts:
         # Auto-detect locks onto the first language heard; Multiple languages never locks.
         if language == AUTO and state["language"] is None:
-            state["language"] = info.language
-            emit("language", info.language)
+            state["language"] = detected
+            emit("language", detected)
         state["prompt"] = (state["prompt"] + " " + " ".join(texts)).strip()[-200:]
