@@ -530,17 +530,19 @@ def settings_window(app):
     note("What live mode records from. A microphone or headset plugged in after diemut "
          "started shows up here too. A change takes effect at the next Start.")
 
-    for key, label, text in (
+    # (setting, label, note, ticked means the setting is off): like Export's boxes, ticking
+    # the fillers one means keeping them
+    for key, label, text, flip in (
             ("hover_hints", "Show hover hints",
-             "Short explanations when the mouse rests on a button or box."),
-            ("leave_out_fillers", "Leave out fillers and false starts when exporting",
-             "Whether Export starts with this ticked. The transcript always keeps them."),
+             "Short explanations when the mouse rests on a button or box.", False),
+            ("leave_out_fillers", "Include fillers and false starts when exporting",
+             "Whether Export starts with this ticked. The transcript always keeps them.", True),
             ("hand_drawn_icons", "Hand-drawn icons",
-             "The ink drawings on buttons. Untick for plain symbols.")):
-        var = tk.BooleanVar(value=app.settings[key])
+             "The ink drawings on buttons. Untick for plain symbols.", False)):
+        var = tk.BooleanVar(value=app.settings[key] != flip)
         ttk.Checkbutton(win, text=label, variable=var,
-                        command=lambda k=key, v=var: app.change_setting(k, v.get())).pack(
-            anchor="w", pady=(14, 0))
+                        command=lambda k=key, v=var, f=flip: app.change_setting(k, v.get() != f)
+                        ).pack(anchor="w", pady=(14, 0))
         note(text)
 
     ttk.Button(win, text="Close", style="Accent.TButton", command=win.destroy).pack(
@@ -587,13 +589,14 @@ def export_dialog(app):
     ts_note = tk.Label(win, text="", font=FONTS["small"], fg=MUTED, bg=BG, anchor="w",
                        justify="left", wraplength=int(300 * app._scale))
     ts_note.pack(fill="x", pady=(4, 0))
-    leave_out = tk.BooleanVar(value=app.leave_out_fillers)
-    leave_out_box = ttk.Checkbutton(win, text="Leave out fillers (um, uh…) and false starts",
-                                    variable=leave_out)
-    leave_out_box.pack(anchor="w", pady=(10, 0))
+    # Ticked means included, as for Timestamps and Notes
+    include_fillers = tk.BooleanVar(value=not app.leave_out_fillers)
+    leave_out_box = ttk.Checkbutton(win, text="Fillers (um, uh…) and false starts",
+                                    variable=include_fillers)
     include_notes = tk.BooleanVar(value=app.include_notes)
     notes_box = ttk.Checkbutton(win, text="Notes ([laughs], [pause]…)", variable=include_notes)
-    notes_box.pack(anchor="w", pady=(4, 0))
+    notes_box.pack(anchor="w", pady=(10, 0))
+    leave_out_box.pack(anchor="w", pady=(4, 0))
 
     chosen = [app.include_ts]          # the box as last ticked for .txt / .docx
 
@@ -630,7 +633,7 @@ def export_dialog(app):
         app.ts_mode = next(t for t, label in app.ts_labels.items()
                             if label == ts_box.get())
         app.include_ts = chosen[0]
-        app.leave_out_fillers = leave_out.get()
+        app.leave_out_fillers = not include_fillers.get()
         app.include_notes = include_notes.get()
         win.destroy()
         app.export(app.export_kind)
