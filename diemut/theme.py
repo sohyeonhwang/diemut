@@ -23,6 +23,7 @@ MUTED = "#8f8e88"
 ACCENT = "#51b5d1"
 DANGER = "#c90065"
 PLAYING = "#ffff99"   # behind the word being played: a faint #FFFF00
+NOTE_BG = "#9dd459"   # behind a note ([laughs]), with TEXT on it
 
 FONTS = {}
 
@@ -55,15 +56,15 @@ def setup_style(root):
     else:
         mono = tkfont.nametofont("TkFixedFont").actual("family")
 
-    def font(size, weight="normal", fam=family):
-        return tkfont.Font(family=fam, size=size, weight=weight)
+    def font(size, weight="normal", fam=family, slant="roman"):
+        return tkfont.Font(family=fam, size=size, weight=weight, slant=slant)
 
     FONTS.update(
         body=font(10), label=font(10), small=font(9), small_bold=font(9, "bold"),
         dropdown=font(9), title=font(20, "bold"), card_title=font(12, "bold"),
         icon=font(22), mono=font(9, fam=mono), tag=font(9, fam=mono),
         card_title_mono=font(12, "bold", fam=mono),
-        text=font(11), speaker=font(11, "bold"), header=font(10, "bold"), symbol=font(12),
+        text=font(11), text_italic=font(11, slant="italic"), speaker=font(11, "bold"), header=font(10, "bold"), symbol=font(12),
     )
 
     style = ttk.Style()

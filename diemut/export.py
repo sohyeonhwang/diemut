@@ -1,5 +1,6 @@
 """Save transcripts as .txt, .vtt, .srt or .docx, and live audio as .mp3."""
 
+from . import notes
 from .speakers import SENTENCE_ENDS, group_blocks
 
 
@@ -156,7 +157,7 @@ def export_docx(path, pieces, names, use_speakers, timestamps, title, meta_lines
                     ts = p.add_run(f"{fmt_time(par['start'])}   ")
                     ts.font.size = Pt(9)
                     ts.font.color.rgb = grey
-                p.add_run(par["text"])
+                _add_text(p, par["text"])
         else:
             for par in block["paragraphs"]:
                 p = document.add_paragraph()
@@ -164,5 +165,11 @@ def export_docx(path, pieces, names, use_speakers, timestamps, title, meta_lines
                     ts = p.add_run(f"{fmt_time(par['start'])}   ")
                     ts.font.size = Pt(9)
                     ts.font.color.rgb = grey
-                p.add_run(par["text"])
+                _add_text(p, par["text"])
     document.save(path)
+
+
+def _add_text(paragraph, text):
+    """A paragraph's text in .docx, with the words of each note ([…]) in italics."""
+    for part, is_note in notes.runs(text):
+        paragraph.add_run(part).italic = is_note or None

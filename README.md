@@ -198,6 +198,7 @@ Keyboard shortcuts, which all work while you're typing in the text box:
 | Double-click a word | Select it and move the playhead to its start |
 | Ctrl+Alt+click (Ctrl+Option+click on a Mac) | Move the playhead to exactly that spot (also in the transcript) |
 | Enter | Split the paragraph at the cursor |
+| Alt+N (Cmd+N on a Mac) | Add a note at the cursor |
 | Ctrl+Enter | Save the correction |
 | Esc | Discard your changes and close the panel |
 | Ctrl+F | Find and replace in the transcript |
@@ -224,9 +225,11 @@ Splits and merges carry over to `.txt` and `.docx`. To copy text from the transc
 
 The window stays usable while speakers are being found, and **Cancel** stops straight away.
 
-**Exporting.** Click **Export…** and choose *Text (.txt)*, *Subtitles (.vtt)* (for web video players), *Subtitles (.srt)* (for most video players and editors; speakers appear as “Name: ” before their words) or *Word (.docx)*. In the same box, **Timestamps** (ticked unless you untick it) adds times to `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels) or *Each paragraph*. Untick it for a transcript without times. Subtitles always have times. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
+**Exporting.** Click **Export…** and choose *Text (.txt)*, *Subtitles (.vtt)* (for web video players), *Subtitles (.srt)* (for most video players and editors; speakers appear as “Name: ” before their words) or *Word (.docx)*. In the same box, **Timestamps** (ticked unless you untick it) adds times to `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels) or *Each paragraph*. Untick it for a transcript without times. Subtitles always have times. **Notes** (ticked unless you untick it) keeps your notes in every text format; in `.docx` their words are in italics. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
 
 **Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, tick **Leave out fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. To have it ticked every time, turn it on in **Settings**. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
+
+**Notes.** A note is something you write into the transcript that nobody said: a pause, laughter, a cough, or what someone meant ("[she means the 2019 study]"). Type it in square brackets in the correction box, or press **Alt+N** (**Cmd+N** on a Mac) to get `[]` with the cursor inside, or right-click a word in the transcript and choose *Add note after "word"*. Notes are highlighted in lime, with their words in italics, so they never look like speech. A note takes no time: it sits right after the word before it, and the words around it keep their exact timings. To change a note, edit it in the correction box; to remove one, delete it there or right-click it and choose *Delete note*. Find searches notes too.
 
 **Find and replace.** **Ctrl+F** opens a small Find window (starting with any text you'd selected). As you type, every match in the transcript is highlighted in yellow, and the current one in pink; **Enter** or **▼** goes to the next one and **Shift+Enter** or **▲** to the previous one. Speaker names and times aren't searched. **Match case** tells "Ann" from "ann"; **Regular expression** lets you search with a [Python regular expression](https://docs.python.org/3/howto/regex.html), for example `\bAnn\b` for "Ann" but not "Anna". **Replace** changes the current match and goes on to the next, and **Replace all** changes every match at once (for example, fixing a misspelled name everywhere). What you type in the Replace box goes in exactly as typed. Like a correction, words you didn't change keep their timings, and each replace is one step for **Ctrl+Z**. **Esc** closes the window.
 
@@ -300,6 +303,7 @@ diemut/
 ├── paragraphs.py   merging and splitting paragraphs
 ├── dialogs.py      small windows: Speakers, Export, Settings, Shortcuts, Find, questions, tooltips
 ├── find.py         finding and replacing text
+├── notes.py        notes ([laughs]) in the transcript
 ├── theme.py        colours, fonts, button styles and mouse pointers
 ├── transcribe.py   Whisper (files and live), model choices, live-mode timing
 ├── speakers.py     speaker labels and paragraph grouping

@@ -5,14 +5,20 @@ Whisper gave them. This module lines the edited text up against the original
 pieces (difflib), keeps the times of matching words, and spreads new words
 evenly across the gap between the kept words around them.
 
-Text without spaces (Chinese, Japanese…) is aligned character by character.
+Text without spaces (Chinese, Japanese…) is aligned character by character. Notes ([…],
+see notes.py) take no part in the alignment: they take no time, at the end of the word
+before them.
 """
 
 import difflib
 import re
 
+from .notes import NOTE, is_note
+
 _NON_WORD = re.compile(r"[^\w]+")
-_TOKEN = re.compile(r"\S+")
+# A note is one token, even with spaces in it, and needs no space before or after it
+_TOKEN = re.compile(rf"{NOTE.pattern}|[^\s\[]+|\[")
+_CHAR = re.compile(rf"{NOTE.pattern}|\S")
 
 
 def _norm(token):
@@ -22,25 +28,28 @@ def _norm(token):
 
 def is_spaceless(pieces, text):
     """True when neither the original pieces nor the edited text use spaces."""
-    original = "".join(p["text"] for p in pieces).strip()
-    return not any(c.isspace() for c in original) and not any(c.isspace() for c in text.strip())
+    original = NOTE.sub("", "".join(p["text"] for p in pieces)).strip()
+    text = NOTE.sub("", text).strip()
+    return not any(c.isspace() for c in original) and not any(c.isspace() for c in text)
 
 
 def tokenize(text, spaceless):
-    """Words in text as (word, char_start, char_end); characters when spaceless."""
-    if spaceless:
-        return [(c, i, i + 1) for i, c in enumerate(text) if not c.isspace()]
-    return [(m.group(), m.start(), m.end()) for m in _TOKEN.finditer(text)]
+    """Words and notes in text as (token, char_start, char_end); characters (and notes) when
+    spaceless."""
+    pattern = _CHAR if spaceless else _TOKEN
+    return [(m.group(), m.start(), m.end()) for m in pattern.finditer(text)]
 
 
 def original_words(pieces, spaceless):
-    """The pieces' words as (word, start, end, piece index).
+    """The pieces' words as (word, start, end, piece index); notes are left out.
 
     A piece can hold several words (live mode makes one piece per segment);
     its time is then shared out in proportion to each word's length.
     """
     words = []
     for k, p in enumerate(pieces):
+        if is_note(p["text"]):
+            continue
         parts = [t for t, _, _ in tokenize(p["text"], spaceless)]
         if not parts:
             continue
@@ -82,17 +91,41 @@ def align(old, new_words, start, end):
 def timed_spans(pieces, text):
     """Map each word of text (as typed in the edit box) to a time.
 
-    Returns [(char_start, char_end, start, end)], in text order.
+    Returns [(char_start, char_end, start, end)], in text order. Notes have no time, so
+    they're left out.
     """
     if not pieces:
         return []
     spaceless = is_spaceless(pieces, text)
     old = original_words(pieces, spaceless)
-    tokens = tokenize(text, spaceless)
+    tokens = [t for t in tokenize(text, spaceless) if not is_note(t[0])]
     if not old or not tokens:
         return []
     times = align(old, [t for t, _, _ in tokens], pieces[0]["start"], pieces[-1]["end"])
     return [(a, b, s, e) for (_, a, b), (s, e, _) in zip(tokens, times)]
+
+
+def _times_with_notes(old, tokens, start, end):
+    """align() for tokens that may include notes: the words are aligned on their own, and
+    each note takes no time, at the end of the word before it (or, with no word before it,
+    the start of the word after it)."""
+    words = [tok for tok, _, _ in tokens if not is_note(tok)]
+    word_times = iter(align(old, words, start, end) if words else [])
+    times = [None if is_note(tok) else next(word_times) for tok, _, _ in tokens]
+    following, after = [None] * len(times), start if not words else end
+    for j in range(len(times) - 1, -1, -1):
+        if times[j] is None:
+            following[j] = after
+        else:
+            after = times[j][0]
+    before = None
+    for j, t in enumerate(times):
+        if t is None:
+            at = following[j] if before is None else before
+            times[j] = (at, at, None)
+        else:
+            before = t[1]
+    return times
 
 
 def retime_spans(pieces, text):
@@ -112,14 +145,16 @@ def retime_spans(pieces, text):
     tokens = tokenize(text, spaceless)
     if not tokens:
         return []
-    times = align(old, [t for t, _, _ in tokens], pieces[0]["start"], pieces[-1]["end"])
+    times = _times_with_notes(old, tokens, pieces[0]["start"], pieces[-1]["end"])
     first_word = {k: i for i, (_, _, _, k) in reversed(list(enumerate(old)))}
 
     out, prev_end, last = [], 0, None
     for (tok, a, b), (start, end, kept) in zip(tokens, times):
+        note = is_note(tok)
+        gap = text[prev_end:a]
         if not out:
             mark = pieces[0].get("par")
-        elif "\n" in text[prev_end:a]:
+        elif "\n" in gap:
             mark = "start"
         elif kept is not None and first_word.get(old[kept][3]) == kept:
             mark = pieces[old[kept][3]].get("par")   # e.g. a "join" from an earlier merge
@@ -128,15 +163,17 @@ def retime_spans(pieces, text):
         prev_end = b
         # Without spaces, join characters back up: kept characters from the same
         # original piece, and runs of new characters, each become one piece.
-        key = ("kept", old[kept][3]) if kept is not None else ("new", None)
-        if (spaceless and out and mark is None and key == last[0]
+        key = ("note", a) if note else ("kept", old[kept][3]) if kept is not None \
+            else ("new", None)
+        if (spaceless and out and mark is None and key == last[0] and not note
                 and (key[0] == "new" or kept == last[1] + 1)):
             piece, a0, _ = out[-1]
             piece["text"] += tok
             piece["end"] = end
             out[-1] = (piece, a0, b)
         else:
-            piece = {"start": start, "end": end, "text": tok if spaceless else " " + tok,
+            glued = spaceless or (out and not gap)     # no space typed before it
+            piece = {"start": start, "end": end, "text": tok if glued else " " + tok,
                      "speaker": speaker}
             if mark:
                 piece["par"] = mark

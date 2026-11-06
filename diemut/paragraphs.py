@@ -8,6 +8,7 @@ the Merge button, and the correction panel's methods.
 import bisect
 
 from . import fillers
+from .notes import NOTE, is_note
 from .theme import BG, TEXT, mix
 
 
@@ -349,8 +350,14 @@ class ParagraphsMixin:
         ranges = self.text.tag_ranges(f"ptext:{k}")
         if ranges and self.text.compare(index, ">=", ranges[0]):
             i = self._piece_at_offset(par, len(self.text.get(ranges[0], index)))
+            word = self.pieces[i]["text"].strip()
+            if is_note(word):
+                menu.add_command(label="Delete note", command=lambda: self._delete_note(i))
+            else:
+                menu.add_command(label=f"Add note after “{word}”",
+                                 command=lambda: self._add_note_after(i))
+            menu.add_separator()
             if i > par["i0"]:
-                word = self.pieces[i]["text"].strip()
                 menu.add_command(label=f"Split paragraph before “{word}”", command=lambda: (
                     self._apply_marks([(i, "start")], par["i0"], "Paragraph split.")))
         for other, label in ((k - 1, "Merge with paragraph above"),
@@ -359,7 +366,7 @@ class ParagraphsMixin:
                 a, b = sorted((par["i0"], self._pars[other]["i0"]))
                 menu.add_command(label=label, command=lambda a=a, b=b: (
                     self._apply_marks([(b, "join")], a, "Paragraphs merged.")))
-        if menu.index("end") is None:
+        if menu.index("end") is None or menu.type("end") == "separator":
             menu.add_command(label="Nothing to split or merge here", state="disabled")
         undo, redo = self.history.undo_label(), self.history.redo_label()
         if undo or redo:
@@ -428,6 +435,37 @@ class ParagraphsMixin:
             for i, c0, c1 in self._piece_spans(par) if ranges else ():
                 if i in drop:
                     t.tag_add("filler", f"{ranges[0]} + {c0} chars", f"{ranges[0]} + {c1} chars")
+
+    def _mark_notes(self):
+        """Highlight the notes ([laughs]) all through the transcript."""
+        t = self.text
+        for k, par in enumerate(self._pars):
+            if "[" not in par["text"]:
+                continue
+            start = t.tag_ranges(f"ptext:{k}")[0]
+            for m in NOTE.finditer(par["text"]):
+                a, b = m.span()
+                t.tag_add("note", f"{start} + {a} chars", f"{start} + {b} chars")
+                t.tag_add("note_i", f"{start} + {a + 1} chars", f"{start} + {b - 1} chars")
+
+    def _add_note_after(self, i):
+        """Open piece i's paragraph with an empty note typed after it, ready to fill in."""
+        k = self._par_at_piece(i)
+        self.open_editor(k)
+        end = next(c1 for j, _, c1 in self._piece_spans(self._pars[k]) if j == i)
+        self.edit_box.mark_set("insert", f"1.0 + {end} chars")
+        self._insert_note()
+
+    def _delete_note(self, i):
+        """Take note i out of the transcript (one undo step)."""
+        anchor = self._view_anchor(i)
+        self._checkpoint("note deletion")
+        note = self.pieces.pop(i)
+        if note.get("par") and i < len(self.pieces) and "par" not in self.pieces[i]:
+            self.pieces[i]["par"] = note["par"]       # so the paragraphs stay as they were
+        self.dirty = True
+        self._render_all(anchor=anchor)
+        self.status_lbl.configure(text="Note deleted. Ctrl+Z brings it back.")
 
     def _par_at_piece(self, i):
         """The paragraph holding piece i (or the next one, if i is past its end)."""

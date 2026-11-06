@@ -586,6 +586,9 @@ def export_dialog(app):
     leave_out_box = ttk.Checkbutton(win, text="Leave out fillers (um, uh…) and false starts",
                                     variable=leave_out)
     leave_out_box.pack(anchor="w", pady=(10, 0))
+    include_notes = tk.BooleanVar(value=app.include_notes)
+    notes_box = ttk.Checkbutton(win, text="Notes ([laughs], [pause]…)", variable=include_notes)
+    notes_box.pack(anchor="w", pady=(4, 0))
 
     chosen = [app.include_ts]          # the box as last ticked for .txt / .docx
 
@@ -602,6 +605,7 @@ def export_dialog(app):
         # Subtitles always have times and audio has none; text keeps the choice
         include_ts.set(chosen[0] if text else k != "mp3")
         leave_out_box.configure(state="disabled" if k == "mp3" else "normal")
+        notes_box.configure(state="disabled" if k == "mp3" else "normal")
         turns = ("Each speaker turn: one time when the speaker changes (on every "
                  "paragraph, without speaker labels).")
         ts_note.configure(text={
@@ -622,6 +626,7 @@ def export_dialog(app):
                             if label == ts_box.get())
         app.include_ts = chosen[0]
         app.leave_out_fillers = leave_out.get()
+        app.include_notes = include_notes.get()
         win.destroy()
         app.export(app.export_kind)
 

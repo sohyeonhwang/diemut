@@ -16,6 +16,7 @@ Nothing is stored on the pieces: like paragraphs, this is worked out when it's n
 import re
 
 from . import speakers
+from .notes import is_note
 
 _FILLER = re.compile(r"u+[mh]+|e+r+m*|a+h+|h+m+|m{2,}|m+h+m+")
 _NOT_LETTER = re.compile(r"[^a-z]")
@@ -33,7 +34,10 @@ def _norm(text):
 
 
 def is_filler(text):
-    """True for a non-word filler: um, uh, er, erm, ah, hmm, mm, mhm (with any punctuation)."""
+    """True for a non-word filler: um, uh, er, erm, ah, hmm, mm, mhm (with any punctuation).
+    A note ([um]) isn't one: it's written in, not said."""
+    if is_note(text):
+        return False
     word = _letters(text)
     return bool(word) and _FILLER.fullmatch(word) is not None
 
@@ -47,7 +51,8 @@ def _false_starts(pieces):
     words, said = [], []        # the real words, and each one as compared (once per word)
     for i, p in enumerate(pieces):
         norm = _norm(p["text"])
-        if norm and not is_filler(p["text"]) and not _is_dash(p["text"]):
+        if norm and not is_filler(p["text"]) and not _is_dash(p["text"]) \
+                and not is_note(p["text"]):
             words.append(i)
             said.append(norm)
     out = set()

@@ -12,15 +12,19 @@ import numpy as np
 
 from . import playback, timing
 from .dialogs import Tooltip, shortcuts_window
+from .notes import NOTE
 from .export import fmt_time
-from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FONTS, MUTED, PLAYING, SURFACE,
-                    TEXT, TEXT2)
+from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FONTS, MUTED, NOTE_BG, PLAYING,
+                    SURFACE, TEXT, TEXT2)
 
 # Ctrl+Alt+click (Ctrl+Option+click on macOS) moves the playhead to the exact spot clicked,
 # in the correction box or the transcript. Alt+click alone is taken by some Linux desktops.
 _MAC = sys.platform == "darwin"
 SEEK_BINDING = "<Control-Option-Button-1>" if _MAC else "<Control-Alt-Button-1>"
 SEEK_CLICK = "Ctrl+Option+click" if _MAC else "Ctrl+Alt+click"
+# Add a note ([…]) at the cursor. Option+N types an accent on a Mac, so it's Cmd+N there.
+NOTE_BINDINGS = ("<Command-n>", "<Command-N>") if _MAC else ("<Alt-n>", "<Alt-N>")
+NOTE_KEYS = "Cmd+N" if _MAC else "Alt+N"
 PLAY_LABEL = "▶"
 PAUSE_LABEL = "❚❚"
 SKIP = 3.0              # seconds the ⟲ / ⟳ buttons (Alt+← / Alt+→) jump
@@ -33,6 +37,8 @@ SHORTCUTS = [
     (SEEK_CLICK, "Move the playhead to exactly that spot (also in the transcript)",
      "move playhead"),
     ("Enter", "Split the paragraph at the cursor", "split paragraph"),
+    (NOTE_KEYS, "Add a note at the cursor, for something nobody said: [laughs], [pause]…",
+     "add note"),
     ("Double-click", "Select a word and move the playhead to its start",
      "select word and move playhead"),
     ("Click and drag", "Select a part to play, in the text or on the audio bar", "select part"),
@@ -128,6 +134,11 @@ class EditorMixin:
                                 highlightcolor=ACCENT, padx=8, pady=6, undo=True,
                                 insertbackground=TEXT, exportselection=False)
         self.edit_box.pack(fill="both", expand=True, pady=(0, 4))   # grows with the panel
+        # Notes, as in the transcript; below "sel", so a selection still shows on them
+        self.edit_box.tag_configure("note", background=NOTE_BG)
+        self.edit_box.tag_configure("note_i", font=FONTS["text_italic"])
+        self.edit_box.tag_lower("note_i")
+        self.edit_box.tag_lower("note")
         self.edit_box.tag_configure("linked", background=TEXT, foreground=BG)
         # Made after "sel" and "linked", so it shows above them; dark text reads on the yellow
         self.edit_box.tag_configure("playing", background=PLAYING, foreground=TEXT)
@@ -138,6 +149,8 @@ class EditorMixin:
             (lambda: self._set_mode(None)) if self._mode else
             (lambda: self.close_editor(save=False))))
         box.bind("<Control-space>", lambda e: self._key(self.toggle_play))
+        for seq in NOTE_BINDINGS:
+            box.bind(seq, lambda e: self._key(self._insert_note))
         box.bind("<Alt-Left>", lambda e: self._key(lambda: self.skip(-SKIP)))
         box.bind("<Alt-Right>", lambda e: self._key(lambda: self.skip(SKIP)))
         box.bind("<Control-l>", lambda e: self._key(self.toggle_loop))
@@ -313,6 +326,31 @@ class EditorMixin:
     def _on_modified(self, _event=None):
         self.edit_box.edit_modified(False)      # so the next change fires this again
         self._show_unsaved()
+        self._mark_box_notes()
+
+    def _mark_box_notes(self):
+        """Highlight the notes typed in the text box, as the transcript does."""
+        box = self.edit_box
+        box.tag_remove("note", "1.0", "end")
+        box.tag_remove("note_i", "1.0", "end")
+        for m in NOTE.finditer(box.get("1.0", "end-1c")):
+            a, b = m.span()
+            box.tag_add("note", f"1.0 + {a} chars", f"1.0 + {b} chars")
+            box.tag_add("note_i", f"1.0 + {a + 1} chars", f"1.0 + {b - 1} chars")
+
+    def _insert_note(self):
+        """Alt+N (Cmd+N on a Mac): type [] at the cursor, with a space before and after it
+        where it would touch a word, and put the cursor between the brackets."""
+        box = self.edit_box
+        if str(box.cget("state")) != "normal":
+            return
+        before, after = box.get("insert -1c", "insert"), box.get("insert", "insert +1c")
+        box.insert("insert", ("" if before in ("", " ", "\n") else " ") + "[")
+        box.mark_set("note_end", "insert")
+        box.mark_gravity("note_end", "left")      # stays before the "]" typed next
+        box.insert("insert", "]" + (" " if after.isalnum() else ""))
+        box.mark_set("insert", "note_end")
+        box.focus_set()
 
     def _save_edit(self):
         """Save the open correction and keep the panel open on that paragraph.

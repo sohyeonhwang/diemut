@@ -13,8 +13,8 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import (export, find, fillers, history, playback, sessions, settings, speakers, timing,
-               transcribe)
+from . import (export, find, fillers, history, notes, playback, sessions, settings, speakers,
+               timing, transcribe)
 from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_choice, ask_speaker_count, count_label,
                       export_dialog, settings_window, FindWindow, SpeakersWindow, Tooltip)
 from .editor import SEEK_BINDING, EditorMixin
@@ -22,7 +22,7 @@ from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
 from .paragraphs import ParagraphsMixin
 from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK, MIC_ICON,
-                    MUTED, PLAYING, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, display_scale,
+                    MUTED, NOTE_BG, PLAYING, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, display_scale,
                     file_cursor, setup_style)
 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
@@ -365,15 +365,15 @@ class App(EditorMixin, ParagraphsMixin):
         self._update_note()
 
     def _update_note(self):
-        notes = []
+        hints = []
         if self.model_name in transcribe.SLOW_MODELS:
-            notes.append("Slower models may fall behind in live mode."
+            hints.append("Slower models may fall behind in live mode."
                          + (" Best on a strong CPU or a GPU." if "large" in self.model_name else ""))
         if self.language == MULTI:
-            notes.append("Multiple languages: re-detects the language every ~30 s of audio. "
+            hints.append("Multiple languages: re-detects the language every ~30 s of audio. "
                          "Switches mid-sentence aren't handled well.")
-        if notes:
-            self.note.configure(text=" ".join(notes))
+        if hints:
+            self.note.configure(text=" ".join(hints))
             self.note.pack(pady=(8, 0), before=self.open_session_btn)   # under the form
         else:
             self.note.pack_forget()
@@ -439,6 +439,7 @@ class App(EditorMixin, ParagraphsMixin):
         self.ts_labels = {"turns": "Each speaker turn", "paragraphs": "Each paragraph"}
         self.ts_mode = "turns"        # remembered between exports
         self.include_ts = True        # Export's Timestamps box
+        self.include_notes = True     # Export's Notes box
         self.leave_out_fillers = self.settings["leave_out_fillers"]   # what Export starts with
         self.export_kind = "txt"
 
@@ -477,9 +478,14 @@ class App(EditorMixin, ParagraphsMixin):
         self.text.tag_configure("placeholder", foreground=MUTED)
         self.text.tag_configure("selected", background=TEXT, foreground=BG)
         self.text.tag_configure("merging", background=TEXT, foreground=BG)   # checked, merging
+        # Notes ([laughs]): lime, with the words in italics. Above the open paragraph's
+        # highlight, so a note always looks like one
+        self.text.tag_configure("note", background=NOTE_BG, foreground=TEXT)
+        self.text.tag_configure("note_i", font=FONTS["text_italic"])
         # Find's matches (FindWindow), above the open paragraph's highlight so they show in it
         self.text.tag_configure("found", background=PLAYING, foreground=TEXT)
         self.text.tag_configure("found_now", background=DANGER, foreground=BG)
+        self.text.tag_raise("sel")      # a selection for copying shows over all of these
         self.text.bind("<Button-1>", self._on_text_press)
         self.text.bind("<ButtonRelease-1>", self._on_text_release)
         self.text.bind("<B1-Motion>", self._on_text_drag)
@@ -916,6 +922,7 @@ class App(EditorMixin, ParagraphsMixin):
         t.configure(state="disabled", cursor=self._text_cursor())
         self._restore_view(anchor)
         self._grey_fillers()
+        self._mark_notes()
         self._show_open_paragraph(scroll=False)
         self._draw_merge()
         self._update_par_tools()
@@ -1428,8 +1435,9 @@ class App(EditorMixin, ParagraphsMixin):
             self.status_lbl.configure(text=f"Saved {os.path.basename(path)}")
             return
         use_speakers = self.speaker_count > 1
-        pieces = (fillers.leave_out(self.pieces, use_speakers) if self.leave_out_fillers
-                  else self.pieces)
+        pieces = self.pieces if self.include_notes else notes.leave_out(self.pieces)
+        if self.leave_out_fillers:
+            pieces = fillers.leave_out(pieces, use_speakers)
         try:
             if kind == "txt":
                 export.export_txt(path, pieces, self.names, use_speakers, self._ts_choice())
