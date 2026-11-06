@@ -33,6 +33,24 @@ STALE = 120            # seconds: a recovery folder untouched this long isn't in
 _JSON, _FLAC, _PCM = "session.json", "audio.flac", "audio.pcm"
 
 
+def make_state(mode, source, started, model, language, detected_language, duration,
+               speaker_count, names, pieces):
+    """Everything about a transcript that a session file keeps, except the audio. source: the
+    file's name (or None for live); started: a datetime."""
+    return {
+        "mode": mode,
+        "source": os.path.basename(source) if source else None,
+        "started": started.isoformat(timespec="seconds"),
+        "model": model,
+        "language": language,
+        "detected_language": detected_language,
+        "duration": duration,
+        "speaker_count": speaker_count,
+        "names": {str(k): v for k, v in names.items()},
+        "pieces": pieces,
+    }
+
+
 class SessionError(Exception):
     """A session file that can't be opened; the message says why, for the person."""
 

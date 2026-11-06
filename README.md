@@ -166,6 +166,14 @@ This *won't* capture audio coming from your laptop/machine, so note that you can
 2. Click a speaker's name (or the **N speakers ↗** button above the transcript) to open the **Speakers** window. See *Fixing speaker labels* below.
 3. **New file ↗** starts another file without going back to the start screen.
 
+**Several files at once.** Pick more than one file in the file chooser (Ctrl+click or Shift+click). A small window lists them and asks which folder to save their sessions in (the files' own folder unless you choose another); each file becomes its own `.diemut` session there, and if one with the same name exists already, the new one gets " (2)" added. The model, language and number of speakers on the start screen apply to every file.
+- `diemut` transcribes them one after another, and saves each one as soon as it's done.
+- The file name at the top becomes a list of the files: click it to switch to another. Beside each file it says how it's doing: done, how far along it is, queued, error or cancelled; the line next to the list shows how the batch is going.
+- You can correct a finished file while the others are transcribed. Switching files saves the one you're leaving.
+- Switching to a file marked error shows what went wrong where the transcript would be.
+- **Cancel** asks whether to cancel just the file on screen (the one being transcribed, or a queued one) or the whole batch. Finished files are always kept. **Home**, **Clear** and closing the window ask before stopping a batch that's still running.
+- **Open saved session ↗** also takes several `.diemut` files at once, with the same list to switch between them.
+
 **Listening and correcting.** Once a transcription has finished (or you've pressed Stop in live mode), click any paragraph. It's highlighted, and a panel opens below the transcript with the paragraph's audio bar (its waveform, plus half a second either side) and its text:
 
 ![The correction panel: a paragraph open below the transcript, with some words selected and the matching stretch highlighted on its waveform](docs/correct.png)
@@ -302,6 +310,7 @@ diemut/
 ├── ui.py           the window: start screen, transcript screen, live mini view
 ├── editor.py       the correction panel (listen, correct, save)
 ├── paragraphs.py   merging and splitting paragraphs
+├── batch.py        several files at once (batchview.py: switching, cancelling)
 ├── dialogs.py      small windows: Speakers, Export, Settings, Shortcuts, Find, questions, tooltips
 ├── find.py         finding and replacing text
 ├── notes.py        notes ([laughs]) in the transcript
@@ -367,7 +376,6 @@ More in the Settings window, for choosing and adding models without editing code
 - Keep fillers and false starts in languages other than English, too: the word-for-word prompt needs a short example sentence in each language, ideally checked by a speaker of it.
 
 **Research workflows**
-- Batch-transcribe a whole folder of recordings.
 - More export formats: `.csv` or `.json` for qualitative analysis tools such as NVivo, ATLAS.ti and MAXQDA.
 - Help with anonymisation: flag or replace names and other identifying details before transcripts are shared.
 

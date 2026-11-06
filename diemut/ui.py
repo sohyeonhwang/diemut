@@ -15,11 +15,13 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import (export, find, fillers, history, notes, playback, sessions, settings, speakers,
                timing, transcribe)
-from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_choice, ask_speaker_count, count_label,
-                      export_dialog, settings_window, FindWindow, SpeakersWindow, Tooltip)
+from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_batch, ask_choice, ask_speaker_count,
+                      count_label, export_dialog, settings_window, FindWindow, SpeakersWindow,
+                      Tooltip)
 from .editor import SEEK_BINDING, EditorMixin
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
+from .batchview import BatchMixin
 from .paragraphs import ParagraphsMixin
 from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK,
                     MIC_ICON, MUTED, NOTE_BG, PLAYING, SETTINGS_ICON, SURFACE, TEXT, TEXT2,
@@ -31,7 +33,7 @@ SEPARATOR = "────"
 AUTOSAVE_MS = 30_000     # how often the recovery copy is brought up to date
 
 
-class App(EditorMixin, ParagraphsMixin):
+class App(EditorMixin, ParagraphsMixin, BatchMixin):
     def __init__(self, root):
         self.root = root
         root.title("diemut")
@@ -60,6 +62,8 @@ class App(EditorMixin, ParagraphsMixin):
         self._speakers_win = None
         self._shortcuts_win = None
         self._find_win = None
+        self.batch = None           # a batch.Batch while several files are open (batchview)
+        self._job = None            # the batch's file being transcribed: its words, audio…
         self._icon_widgets = {}     # widgets showing an icon, for redrawing (_show_icon)
         self.history = history.History()   # undo and redo for the transcript
         self._relabel = False       # finding speakers again (so its result can be undone)
@@ -422,6 +426,12 @@ class App(EditorMixin, ParagraphsMixin):
         self.dot_id = self.dot.create_oval(1, 1, 9, 9, fill=DANGER, outline="")
         self.title_lbl = tk.Label(top, text="", font=FONTS["header"], fg=TEXT, bg=BG)
         self.sub_lbl = tk.Label(top, text="", font=FONTS["mono"], fg=TEXT2, bg=BG)
+        # With several files: the file list in place of the title, and how the batch is going
+        self.file_btn = ttk.Menubutton(top, style="Title.TMenubutton")
+        self.file_menu = tk.Menu(self.file_btn, tearoff=0, postcommand=self._fill_file_menu,
+                                 font=FONTS["body"])
+        self.file_btn.configure(menu=self.file_menu)
+        self.batch_lbl = tk.Label(top, text="", font=FONTS["small"], fg=TEXT2, bg=BG)
         self.header_tags = tk.Frame(top, bg=BG)
         self.header_tags.pack(side="right")
 
@@ -551,13 +561,20 @@ class App(EditorMixin, ParagraphsMixin):
         self.mode = mode
         self.start_screen.pack_forget()
         self.transcript_screen.pack(fill="both", expand=True)
-        for w in (self.mini_btn, self.dot, self.title_lbl, self.sub_lbl):
+        for w in (self.mini_btn, self.dot, self.title_lbl, self.file_btn, self.sub_lbl,
+                  self.batch_lbl):
             w.pack_forget()
         if mode == "live":
             self.mini_btn.pack(side="left", padx=(6, 0))
             self.dot.pack(side="left", padx=(12, 6))
-        self.title_lbl.pack(side="left", padx=(0 if mode == "live" else 12, 0))
+        if self.batch is not None:
+            self.file_btn.pack(side="left", padx=(0 if mode == "live" else 8, 0))
+        else:
+            self.title_lbl.pack(side="left", padx=(0 if mode == "live" else 12, 0))
         self.sub_lbl.pack(side="left", padx=8)
+        if self.batch is not None:
+            self.batch_lbl.pack(side="left")
+            self._refresh_batch_header()
         self._update_header_tags()
 
     def _confirm_discard(self, action="continue"):
@@ -579,7 +596,10 @@ class App(EditorMixin, ParagraphsMixin):
 
     def go_home(self):
         self._save_edit()
-        if self.busy:
+        if self.batch is not None:
+            if not self._leave_current("go back"):
+                return
+        elif self.busy:
             if not messagebox.askyesno("Stop and go back?",
                                        "This will stop the current transcription. Go back anyway?"):
                 return
@@ -597,10 +617,14 @@ class App(EditorMixin, ParagraphsMixin):
 
     def _on_close(self):
         self._save_edit()
-        if self.busy and not messagebox.askyesno("Quit diemut?",
-                                                 "A transcription is still running. Quit anyway?"):
-            return
-        if not self.busy and not self._confirm_discard("quit"):
+        if self.batch is not None:
+            if not self._leave_current("quit", quitting=True):
+                return
+        elif self.busy:
+            if not messagebox.askyesno("Quit diemut?",
+                                       "A transcription is still running. Quit anyway?"):
+                return
+        elif not self._confirm_discard("quit"):
             return
         self.stop_event.set()
         self.player.close()
@@ -817,14 +841,22 @@ class App(EditorMixin, ParagraphsMixin):
 
     # ------------------------------------------------------------- file --
     def open_file(self):
-        path = filedialog.askopenfilename(
-            title="Choose an audio or video file",
-            filetypes=[("Audio or video", MEDIA_TYPES), ("All files", "*.*")])
-        if not path:
+        """New file ↗ (and the start screen's file card): one file, or several as a batch."""
+        paths = list(filedialog.askopenfilenames(
+            title="Choose audio or video files (several at once is fine)",
+            filetypes=[("Audio or video", MEDIA_TYPES), ("All files", "*.*")]))
+        if not paths:
+            return
+        folder = ask_batch(self, paths) if len(paths) > 1 else None
+        if len(paths) > 1 and not folder:
             return
         if self.mode == "file" and self.transcript_screen.winfo_ismapped() \
-                and not self._confirm_discard("open a new file"):
+                and not self._leave_current("open a new file"):
             return
+        if folder:
+            self.start_batch(paths, folder)
+            return
+        path = paths[0]
         self.reset_transcript()
         self.source_path = path
         self._show_transcript("file")
@@ -842,6 +874,9 @@ class App(EditorMixin, ParagraphsMixin):
                                self.stop_event, self.num_speakers)).start()
 
     def cancel_file(self):
+        if self.batch is not None and self.batch.active():
+            self._cancel_in_batch()
+            return
         self.stop_event.set()
         self.cancel_btn.configure(state="disabled")
         self.status_lbl.configure(text="Cancelling…")
@@ -866,7 +901,7 @@ class App(EditorMixin, ParagraphsMixin):
                       "paused": "Paused", "stopping": "Stopping…", "stopped": "Stopped"}
             self.title_lbl.configure(text=titles[s])
         else:
-            if self.busy:
+            if self.busy or (self.batch is not None and self.batch.active()):
                 self.cancel_btn.configure(state="normal")
                 self.cancel_btn.pack(side="left")
             else:
@@ -1193,6 +1228,8 @@ class App(EditorMixin, ParagraphsMixin):
                 sid, kind, payload = self.ui_q.get_nowait()
                 if sid == self.session_id:
                     self._handle(kind, payload)
+                elif self.batch is not None and sid == self.batch.sid:
+                    self._handle_batch(kind, payload)
         except queue.Empty:
             pass
         self.root.after(80, self._poll)
@@ -1345,25 +1382,22 @@ class App(EditorMixin, ParagraphsMixin):
 
     def _session_state(self):
         """Everything about the transcript that a session file keeps, except the audio."""
-        return {
-            "mode": self.mode,
-            "source": os.path.basename(self.source_path) if self.source_path else None,
-            "started": self.session_start.isoformat(timespec="seconds"),
-            "model": self.session_model,
-            "language": self.session_language,
-            "detected_language": self.detected_language,
-            "duration": self.duration,
-            "speaker_count": self.speaker_count,
-            "names": {str(k): v for k, v in self.names.items()},
-            "pieces": self.pieces,
-        }
+        return sessions.make_state(self.mode, self.source_path, self.session_start,
+                                   self.session_model, self.session_language,
+                                   self.detected_language, self.duration, self.speaker_count,
+                                   self.names, self.pieces)
 
     def open_session(self):
-        path = filedialog.askopenfilename(
-            title="Open a saved session",
-            filetypes=[("diemut session", f"*{sessions.SUFFIX}"), ("All files", "*.*")])
-        if not path or not self._confirm_discard("open another session"):
+        """Open saved session ↗: one session, or several with a file list to switch between."""
+        paths = list(filedialog.askopenfilenames(
+            title="Open saved sessions (several at once is fine)",
+            filetypes=[("diemut session", f"*{sessions.SUFFIX}"), ("All files", "*.*")]))
+        if not paths or not self._confirm_discard("open another session"):
             return
+        if len(paths) > 1:
+            self.open_sessions(paths)
+            return
+        path = paths[0]
         self.root.configure(cursor="watch")
         self.root.update_idletasks()
         try:
@@ -1521,7 +1555,7 @@ class App(EditorMixin, ParagraphsMixin):
     def clear(self):
         if self.busy or not self.pieces:
             return
-        if not self._confirm_discard("clear it"):
+        if not self._leave_current("clear it"):
             return
         keep_source = self.source_path
         self.close_editor(save=False)

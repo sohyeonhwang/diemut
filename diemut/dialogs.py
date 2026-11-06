@@ -1,9 +1,10 @@
 """Small windows: tooltips, the Speakers window, the speaker-count and Export dialogs, the
 list of shortcuts, Settings, Find and replace, and a question with a few choices."""
 
+import os
 import re
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from . import find, playback, transcribe
 from .export import fmt_time
@@ -307,6 +308,64 @@ def ask_choice(parent, title, message, choices):
     win.focus_set()
     parent.wait_window(win)
     return result.get("key")
+
+
+def ask_batch(app, paths):
+    """Before transcribing several files: where their sessions go. Returns the folder, or None
+    if the person cancels."""
+    win = make_dialog(app.root, "Transcribe files")
+    wrap = int(420 * app._scale)
+    tk.Label(win, text=f"Transcribe {len(paths)} files", font=FONTS["header"], fg=TEXT, bg=BG,
+             anchor="w").pack(fill="x")
+    box = tk.Frame(win, bg=BG, highlightthickness=1, highlightbackground=BORDER)
+    box.pack(fill="x", pady=(8, 0))
+    names = tk.Listbox(box, height=min(len(paths), 8), font=FONTS["body"], fg=TEXT, bg=BG,
+                       relief="flat", highlightthickness=0, activestyle="none",
+                       selectbackground=BG, selectforeground=TEXT, takefocus=0)
+    for p in paths:
+        names.insert("end", os.path.basename(p))
+    if len(paths) > 8:
+        bar = ttk.Scrollbar(box, command=names.yview)
+        names.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+    names.pack(fill="x", padx=6, pady=4)
+
+    tk.Label(win, text="Each file is saved as its own session (.diemut) in:", font=FONTS["body"],
+             fg=TEXT2, bg=BG, anchor="w").pack(fill="x", pady=(12, 2))
+    row = tk.Frame(win, bg=BG)
+    row.pack(fill="x")
+    folder = tk.StringVar(value=os.path.dirname(paths[0]))
+    entry = ttk.Entry(row, textvariable=folder, font=FONTS["body"], width=42, state="readonly")
+    entry.pack(side="left", fill="x", expand=True)
+
+    def choose():
+        picked = filedialog.askdirectory(parent=win, initialdir=folder.get(),
+                                         title="Save the sessions in")
+        if picked:
+            folder.set(picked)
+    ttk.Button(row, text="Choose ↗", command=choose).pack(side="left", padx=(6, 0))
+    tk.Label(win, text="The model, language and number of speakers on the start screen apply "
+                       "to every file. A session with the same name already there is kept: "
+                       "the new one gets (2) added.",
+             font=FONTS["small"], fg=MUTED, bg=BG, anchor="w", justify="left",
+             wraplength=wrap).pack(fill="x", pady=(6, 0))
+
+    result = {}
+
+    def start(_event=None):
+        result["folder"] = folder.get()
+        win.destroy()
+
+    bottom = tk.Frame(win, bg=BG)
+    bottom.pack(fill="x", pady=(14, 0))
+    ttk.Button(bottom, text="Start", style="Accent.TButton", command=start).pack(side="right")
+    ttk.Button(bottom, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 6))
+    win.bind("<Return>", start)
+    win.bind("<Escape>", lambda e: win.destroy())
+    show_dialog(win, app.root, modal=True)
+    win.focus_set()
+    app.root.wait_window(win)
+    return result.get("folder")
 
 
 class FindWindow:

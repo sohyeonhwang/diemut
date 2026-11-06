@@ -120,6 +120,10 @@ def setup_style(root):
     style.configure("TCheckbutton", background=BG, foreground=TEXT, focuscolor=BG,
                     indicatorbackground=BG, indicatorforeground=ACCENT)
     style.map("TCheckbutton", background=[("active", BG)], foreground=[("disabled", MUTED)])
+    # The file list's button in place of the title, for a batch of files (batchview)
+    style.configure("Title.TMenubutton", font=FONTS["header"], background=BG, foreground=TEXT,
+                    padding=(6, 2))
+    style.map("Title.TMenubutton", background=[("active", HOVER)])
     style.configure("Subtle.TCombobox", fieldbackground=BG, background=BG,
                     foreground=MUTED, bordercolor=BORDER, lightcolor=BG, darkcolor=BG,
                     arrowcolor=MUTED, padding=(6, 2))
