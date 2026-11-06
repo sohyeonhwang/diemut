@@ -12,7 +12,7 @@ Everything runs locally. Your audio never leaves your computer; the only interne
 |---|---|---|---|
 | ![Start screen](docs/start.png) | ![A finished file transcript with speaker labels](docs/file.png) | ![Live transcription while recording](docs/live.png) | ![Editing the transcription text](docs/correct.png) |
 
-*(Simulated screenshots show* `diemut` *with Windows' fonts, Segoe UI and Consolas. On macOS and Linux it looks much the same but uses your system's fonts. Note these are not real transcripts, they're made up. Also for whatever reason this screenshot looks sleeker than the actual interface.)*
+*(Screenshots are of `diemut` on Windows. On macOS and Linux it looks much the same but uses your system's fonts. The transcripts are made up, and so is the audio.)*
 
 ## What it does
 
@@ -174,6 +174,8 @@ This *won't* capture audio coming from your laptop/machine, so note that you can
 - **Cancel** asks whether to cancel just the file on screen (the one being transcribed, or a queued one) or the whole batch. Finished files are always kept. **Home**, **Clear** and closing the window ask before stopping a batch that's still running.
 - **Open saved session ↗** also takes several `.diemut` files at once, with the same list to switch between them.
 
+![Several files: the file list open, showing one file done, one 40% through, one queued and one with an error](docs/batch.png)
+
 **Listening and correcting.** Once a transcription has finished (or you've pressed Stop in live mode), click any paragraph. It's highlighted, and a panel opens below the transcript with the paragraph's audio bar (its waveform, plus half a second either side) and its text:
 
 ![The correction panel: a paragraph open below the transcript, with some words selected and the matching stretch highlighted on its waveform](docs/correct.png)
@@ -222,6 +224,8 @@ Corrections carry over to every export format. Words you didn't change keep thei
 - You can also **right-click a paragraph** to merge it with the one above or below.
 - After a merge or split, the transcript stays where it was, with the changed paragraph in the same spot on screen, and the merged paragraph stays white on black, as it was while checked, for a moment before fading back, so you can see what changed (a split's two halves do the same).
 
+![Merge mode: three paragraphs from the same speaker shown white on black, Merge 3 paragraphs and Cancel at the top of the transcript, and the correction panel greyed out](docs/merge.png)
+
 Splits and merges carry over to `.txt` and `.docx`. To copy text from the transcript, drag to select it, then press **Ctrl+C** (or right-click and choose *Copy*).
 
 **Fixing speaker labels** (files, and live recordings once you've used **Find speakers ↗**). Speaker labelling can give one person several labels, or put two people under one. The **Speakers** window lists every speaker with how long they talk:
@@ -233,13 +237,21 @@ Splits and merges carry over to `.txt` and `.docx`. To copy text from the transc
 
 The window stays usable while speakers are being found, and **Cancel** stops straight away.
 
+<img src="docs/speakers.png" width="640" alt="The Speakers window over the transcript: each speaker's name, how long they talk, a play button and Merge into">
+
 **Exporting.** Click **Export ↗** and choose *Text (.txt)*, *Subtitles (.vtt)* (for web video players), *Subtitles (.srt)* (for most video players and editors; speakers appear as “Name: ” before their words) or *Word (.docx)*. In the same box, **Timestamps** (ticked unless you untick it) adds times to `.txt` and `.docx`: *Each speaker turn* (one time each time the speaker changes, or on every paragraph if there are no speaker labels) or *Each paragraph*. Untick it for a transcript without times. Subtitles always have times. **Notes** (ticked unless you untick it) keeps your notes in every text format; in `.docx` their words are in italics. In live mode, *Audio (.mp3)* saves the recording itself (about 28 MB an hour).
 
-**Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, untick **Fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. To have it unticked every time, untick *Include fillers and false starts when exporting* in **Settings**. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
+<img src="docs/export.png" width="320" alt="The Export dialog: the formats, then the Timestamps, Notes and Fillers tick boxes">
+
+**Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, untick **Fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. It stays as you left it until you close `diemut`. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
 
 **Notes.** A note is something you write into the transcript that nobody said: a pause, laughter, a cough, or what someone meant ("[she means the 2019 study]"). Type it in square brackets in the correction box, or press **Alt+N** (**Cmd+N** on a Mac) to get `[]` with the cursor inside, or right-click a word in the transcript and choose *Add note after "word"*. Notes are highlighted in lime, with their words in italics, so they never look like speech. A note takes no time: it sits right after the word before it, and the words around it keep their exact timings. To change a note, edit it in the correction box; to remove one, delete it there or right-click it and choose *Delete note*. Find searches notes too.
 
+![Notes in the transcript, highlighted in lime with their words in italics, and a new note being typed in the correction box](docs/notes.png)
+
 **Find and replace.** **Ctrl+F** opens a small Find window (starting with any text you'd selected). As you type, every match in the transcript is highlighted in yellow, and the current one in pink; **Enter** or the down arrow goes to the next one and **Shift+Enter** or the up arrow to the previous one. Speaker names and times aren't searched. **Match case** tells "Ann" from "ann"; **Regular expression** lets you search with a [Python regular expression](https://docs.python.org/3/howto/regex.html), for example `\bAnn\b` for "Ann" but not "Anna". **Replace** changes the current match and goes on to the next, and **Replace all** changes every match at once (for example, fixing a misspelled name everywhere). What you type in the Replace box goes in exactly as typed. Like a correction, words you didn't change keep their timings, and each replace is one step for **Ctrl+Z**. **Esc** closes the window.
+
+![The Find window over the transcript: every match of "parchment" highlighted in yellow, the current one in pink, with Replace and Replace all](docs/find.png)
 
 **Undo.** **Ctrl+Z** undoes the last change to the transcript, and **Ctrl+Y** (or Ctrl+Shift+Z) redoes it: a saved correction, a paragraph split or merge, a speaker change, a rename or merge in the Speakers window, a replace, or new speaker labels from *Find speakers again ↗*. Up to 30 changes are kept. While you're typing in the correction box, Ctrl+Z undoes your typing instead; the transcript's undo is also in the right-click menu and the Speakers window. Starting a new transcript or opening a session starts a fresh undo history.
 
@@ -254,7 +266,6 @@ While there are unsaved changes, `diemut` also keeps a recovery copy every 30 se
 **Settings** (the cog at the bottom right of every screen). Changes apply straight away and are remembered the next time you open `diemut`:
 - **Microphone**: what live mode records from. *System default* is the one your computer uses. A headset plugged in after `diemut` started shows up in the list too. A change takes effect at the next **Start**.
 - **Show hover hints**: the short explanations that appear when the mouse rests on a button or box.
-- **Include fillers and false starts when exporting**: whether the Export dialog's *Fillers (um, uh…) and false starts* box starts ticked.
 - **Hand-drawn icons**: the ink drawings on the buttons. Untick it for plain symbols.
 
 They're saved in `settings.json` in `~/.cache/diemut` (or `$DIEMUT_HOME`), next to the speaker models.
