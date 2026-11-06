@@ -16,8 +16,8 @@ from tkinter import filedialog, messagebox, ttk
 from . import (engines, export, find, fillers, history, notes, playback, sessions, settings,
                speakers, timing, transcribe)
 from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_batch, ask_choice, ask_speaker_count,
-                      count_label, export_dialog, settings_window, FindWindow, SpeakersWindow,
-                      Tooltip)
+                      count_label, export_dialog, settings_window, FindWindow,
+                      SpeakersWindow, Tooltip)
 from .editor import SEEK_BINDING, EditorMixin
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name

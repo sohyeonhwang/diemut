@@ -3,6 +3,7 @@ list of shortcuts, Settings, Find and replace, and a question with a few choices
 
 import os
 import re
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -36,7 +37,8 @@ def tip_window(widget, title, text, x, y):
              justify="left", anchor="w").pack(fill="x")
     frame.pack()
     tip.update_idletasks()
-    x = max(0, min(x, tip.winfo_screenwidth() - tip.winfo_reqwidth()))
+    left, _, right, _ = _screen_area(tip, x, y)      # (the monitor it's on, not the main one)
+    x = max(left, min(x, right - tip.winfo_reqwidth()))
     tip.geometry(f"+{x}+{y}")
     return tip
 
@@ -60,7 +62,8 @@ class Tooltip:
         y = w.winfo_rooty() + w.winfo_height() + 6      # centred below the widget
         self.tip = tip = tip_window(w, self.title, text, 0, y)
         x = w.winfo_rootx() + w.winfo_width() // 2 - tip.winfo_reqwidth() // 2
-        tip.geometry(f"+{max(0, x)}+{y}")
+        left, _, right, _ = _screen_area(tip, x, y)
+        tip.geometry(f"+{max(left, min(x, right - tip.winfo_reqwidth()))}+{y}")
 
     def hide(self, _event=None):
         if self.tip is not None:
@@ -68,15 +71,41 @@ class Tooltip:
             self.tip = None
 
 
+def _screen_area(widget, x, y):
+    """(left, top, right, bottom) of the screen around point x, y: on Windows, the monitor
+    it's on (Tk only knows the main one, so a window on a second monitor was pulled back to
+    the first); elsewhere, the whole screen as Tk sees it."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                            ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+            user32 = ctypes.windll.user32
+            user32.MonitorFromPoint.restype = wintypes.HANDLE
+            monitor = user32.MonitorFromPoint(wintypes.POINT(x, y), 2)    # the nearest one
+            info = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+            if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                r = info.rcWork                 # without the taskbar
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight() - 40
+
+
 def center_over(win, parent):
-    """Place a pop-up window over the middle of parent's window, kept on screen."""
+    """Place a pop-up window over the middle of parent's window, kept on its monitor."""
     win.update_idletasks()
     top = parent.winfo_toplevel()
     w, h = win.winfo_reqwidth(), win.winfo_reqheight()
     x = top.winfo_rootx() + (top.winfo_width() - w) // 2
     y = top.winfo_rooty() + (top.winfo_height() - h) // 3
-    x = max(0, min(x, win.winfo_screenwidth() - w))
-    y = max(0, min(y, win.winfo_screenheight() - h - 40))
+    left, upper, right, lower = _screen_area(win, top.winfo_rootx() + top.winfo_width() // 2,
+                                             top.winfo_rooty() + top.winfo_height() // 2)
+    x = max(left, min(x, right - w))
+    y = max(upper, min(y, lower - h))
     win.geometry(f"+{x}+{y}")
 
 
@@ -88,6 +117,14 @@ def make_dialog(parent, title):
     win.transient(parent)
     win.resizable(False, False)
     return win
+
+
+def bring_back(win, parent):
+    """Show a small window that's already open again, over the middle of parent (after
+    that, it stays wherever the person puts it)."""
+    center_over(win, parent)
+    win.deiconify()
+    win.lift()
 
 
 def show_dialog(win, parent, modal=False):
@@ -435,8 +472,7 @@ class FindWindow:
         self.focus()
 
     def focus(self):
-        self.win.deiconify()
-        self.win.lift()
+        bring_back(self.win, self.app.root)
         self.find_entry.focus_set()
         self.find_entry.select_range(0, "end")
 
@@ -532,8 +568,7 @@ def shortcuts_window(app, shortcuts):
     at a time; asking again brings it to the front."""
     win = app._shortcuts_win
     if win is not None and win.winfo_exists():
-        win.deiconify()
-        win.lift()
+        bring_back(win, app.root)
         return
     win = app._shortcuts_win = make_dialog(app.root, "Shortcuts")
     grid = tk.Frame(win, bg=BG)
@@ -560,8 +595,7 @@ def settings_window(app):
     apply and are saved straight away (App.change_setting). One window at a time."""
     win = app._settings_win
     if win is not None and win.winfo_exists():
-        win.deiconify()
-        win.lift()
+        bring_back(win, app.root)
         return
     win = app._settings_win = make_dialog(app.root, "Settings")
     wrap = int(340 * display_scale(win))
