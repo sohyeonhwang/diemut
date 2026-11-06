@@ -100,6 +100,11 @@ class BatchMixin:
             if shown:
                 self.duration = payload
                 self.sub_lbl.configure(text=fmt_time(payload))
+        elif kind == "device":
+            job["device"] = payload
+            if shown:
+                self.session_device = payload
+                self._update_header_tags()
         elif kind == "language":
             job["language"] = payload
             if shown:
@@ -247,6 +252,7 @@ class BatchMixin:
             job = self._job
             self.pieces, self.audio = job["pieces"], job["audio"]
             self.duration, self.detected_language = job["duration"], job["language"]
+            self.session_device = job.get("device")
             self.speaker_count, self.session_start = job["speaker_count"], job["started"]
             self.session_model, self.session_language, _ = self._batch_job_settings
             self.busy, self.stage = True, item.stage

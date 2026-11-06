@@ -181,7 +181,7 @@ For languages other than English, the larger models are noticeably more accurate
 
 **Rough speed on a typical laptop CPU** for one hour of audio: small takes about 15–25 minutes, and large-v3 can take over an hour. Speaker labelling adds a few minutes. This varies a lot between computers.
 
-**GPU (optional):** if you have an NVIDIA graphics card with CUDA 12 and cuDNN 9 installed, `diemut` uses it automatically. If the GPU doesn't work, `diemut` quietly switches to the CPU.
+**GPU (optional):** if you have an NVIDIA graphics card with CUDA 12 and cuDNN 9 installed, `diemut` uses it automatically. If the GPU doesn't work, `diemut` quietly switches to the CPU. The tags at the top right of the transcript show which one it used (**GPU** or **CPU**) for a transcript made since `diemut` started. Other graphics cards (Intel, AMD) and NPUs can't be used yet.
 
 ## Languages
 

@@ -160,6 +160,13 @@ class SpeechToText:
         self.model = None
 
 
+def _load(stt, model_name, emit):
+    """Load the model for a worker, and say where it runs ("device": "cuda" or "cpu")."""
+    model = stt.load(model_name, lambda m: emit("status", m))
+    emit("device", stt.device)
+    return model
+
+
 # --------------------------------------------------------------------------- #
 # File transcription
 # --------------------------------------------------------------------------- #
@@ -167,7 +174,7 @@ def file_worker(stt, path, model_name, language, emit, stop_event, num_speakers=
     """num_speakers: how many people speak in the file, if the person said; or None."""
     try:
         from faster_whisper import decode_audio
-        model = stt.load(model_name, lambda m: emit("status", m))
+        model = _load(stt, model_name, emit)
         emit("status", "Reading the file…")
         audio = decode_audio(path, sampling_rate=SAMPLE_RATE)
         duration = len(audio) / SAMPLE_RATE
@@ -186,7 +193,7 @@ def file_worker(stt, path, model_name, language, emit, stop_event, num_speakers=
                     emit("reset", None)
                     emit("status", "The GPU didn't work, so diemut is switching to the CPU…")
                     stt.fall_back_to_cpu()
-                    model = stt.load(model_name, lambda m: emit("status", m))
+                    model = _load(stt, model_name, emit)
                 else:
                     raise
         if stop_event.is_set():
@@ -311,7 +318,7 @@ def live_worker(stt, model_name, language, emit, stop_event, pause_event, device
     import sounddevice as sd
     stream = None
     try:
-        model = stt.load(model_name, lambda m: emit("status", m))
+        model = _load(stt, model_name, emit)
         audio_q = queue.Queue()
 
         def callback(indata, frames, time_info, status):
@@ -415,7 +422,7 @@ def _transcribe_chunk(stt, model_name, audio, offset, language, state, emit):
                 raise
             emit("status", "The GPU didn't work, so diemut is switching to the CPU…")
             stt.fall_back_to_cpu()
-            state["model"] = stt.load(model_name, lambda m: emit("status", m))
+            state["model"] = _load(stt, model_name, emit)
             segments, info = run()
             emit("status", "Listening… speak into your microphone.")
     finally:

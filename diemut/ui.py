@@ -658,6 +658,7 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         self.session_model = self.model_name
         self.session_language = self.language
         self.detected_language = None
+        self.session_device = None  # where Whisper ran for this transcript ("cuda"/"cpu"), if known
         self.duration = None
         self.source_path = None
         self.session_start = dt.datetime.now()
@@ -918,6 +919,8 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         else:
             lang = language_name(self.session_language)
         tags = [f"whisper-{self.session_model}", lang]
+        if self.session_device:       # where it ran, when it was made in this session
+            tags.insert(1, "GPU" if self.session_device == "cuda" else "CPU")
         n = self.speaker_count
         self.spk_btn.configure(text=f"{n} speaker{'s' if n > 1 else ''} ↗")
         self._layout_right()
@@ -927,6 +930,11 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
         for t in tags:
             tag = self._tag(self.header_tags, t)
             tag.pack(side="left", padx=(6, 0))
+            if t in ("CPU", "GPU"):
+                Tooltip(tag, "Where Whisper ran", "On the graphics card (an NVIDIA one, with CUDA)."
+                        if t == "GPU" else
+                        "On the processor. diemut can only use NVIDIA graphics cards so far; other "
+                        "graphics cards and NPUs aren't supported yet.")
 
     def _layout_right(self):
         """The buttons on the right of the row above the transcript, in order: Merge (once
@@ -1247,6 +1255,9 @@ class App(EditorMixin, ParagraphsMixin, BatchMixin):
             self.sub_lbl.configure(text=fmt_time(payload))
         elif kind == "language":
             self.detected_language = payload
+            self._update_header_tags()
+        elif kind == "device":
+            self.session_device = payload
             self._update_header_tags()
         elif kind == "piece":
             self._append_piece(payload)
