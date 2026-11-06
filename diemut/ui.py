@@ -21,9 +21,9 @@ from .editor import SEEK_BINDING, EditorMixin
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
 from .paragraphs import ParagraphsMixin
-from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK, MIC_ICON,
-                    MUTED, NOTE_BG, PLAYING, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, display_scale,
-                    file_cursor, setup_style)
+from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK,
+                    MIC_ICON, MUTED, NOTE_BG, PLAYING, SETTINGS_ICON, SURFACE, TEXT, TEXT2,
+                    WINDOWS, display_scale, file_cursor, icon, icon_images, setup_style)
 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
                "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv")
@@ -60,6 +60,7 @@ class App(EditorMixin, ParagraphsMixin):
         self._speakers_win = None
         self._shortcuts_win = None
         self._find_win = None
+        self._icon_widgets = {}     # widgets showing an icon, for redrawing (_show_icon)
         self.history = history.History()   # undo and redo for the transcript
         self._relabel = False       # finding speakers again (so its result can be undone)
         self.mini_active = False
@@ -213,8 +214,9 @@ class App(EditorMixin, ParagraphsMixin):
                 "Labels who is speaking (Speaker 1, Speaker 2…), for files and for live "
                 "recordings after Stop.")
         tk.Label(tags, text="•", fg=MUTED, bg=BG, font=FONTS["body"]).pack(side="left", padx=8)
-        tk.Label(tags, text=f"{LOCK}Fully local", fg=TEXT2, bg=BG,
-                 font=FONTS["body"]).pack(side="left")
+        local = tk.Label(tags, fg=TEXT2, bg=BG, font=FONTS["body"])
+        self._show_icon(local, "lock", f"{LOCK}Fully local", label=" Fully local")
+        local.pack(side="left")
 
         cards = tk.Frame(inner, bg=BG)
         cards.pack(fill="x")
@@ -268,7 +270,7 @@ class App(EditorMixin, ParagraphsMixin):
 
         self.note = tk.Label(inner, text="", font=FONTS["small"], fg=MUTED, bg=BG,
                              wraplength=460, justify="center")
-        self.open_session_btn = ttk.Button(inner, text="Open saved session…",
+        self.open_session_btn = ttk.Button(inner, text="Open saved session ↗",
                                            command=self.open_session)
         self.open_session_btn.pack(pady=(16, 0))
         self._settings_button(screen).place(relx=1, rely=1, x=-14, y=-12, anchor="se")
@@ -320,11 +322,33 @@ class App(EditorMixin, ParagraphsMixin):
         self._update_note()
 
     def _settings_button(self, parent):
-        """⚙, at the bottom right of each screen."""
-        button = ttk.Button(parent, text=SETTINGS_ICON, style="Icon.TButton",
-                            command=lambda: settings_window(self))
+        """Settings (the settings icon, or ⚙), at the bottom right of each screen."""
+        button = ttk.Button(parent, style="Icon.TButton", command=lambda: settings_window(self))
+        self._show_icon(button, "settings", SETTINGS_ICON)
         Tooltip(button, "Settings", "The microphone, hover hints, and what Export starts with.")
         return button
+
+    def _show_icon(self, widget, name, text, label=None, width=0, toggle=False):
+        """Show assets/icons/<name> on a button or label, with label beside it if given; or
+        text instead, with plain symbols chosen in Settings or if the icon is missing. width
+        is the text's width (in characters); toggle: a button that's on keeps its ink.
+        Remembered, so changing the setting redraws it."""
+        args = (widget, name, text, label, width, toggle)
+        self._icon_widgets[str(widget)] = args
+        img = None
+        if self.settings["hand_drawn_icons"]:
+            img = (icon(self.root, name, self._scale) if isinstance(widget, tk.Label)
+                   else icon_images(self.root, name, self._scale, toggle))
+        if not widget.winfo_exists():
+            del self._icon_widgets[str(widget)]
+        elif img:
+            widget.configure(image=img, text=label or "", compound="left" if label else "none")
+            if not isinstance(widget, tk.Label):
+                widget.configure(width=0)
+        else:
+            widget.configure(image="", text=text, compound="none")
+            if not isinstance(widget, tk.Label):
+                widget.configure(width=width)
 
     @property
     def mic_name(self):
@@ -340,6 +364,9 @@ class App(EditorMixin, ParagraphsMixin):
             self.leave_out_fillers = value      # what Export starts with
         elif key == "microphone":
             self._update_header_tags()
+        elif key == "hand_drawn_icons":
+            for args in list(self._icon_widgets.values()):
+                self._show_icon(*args)
         try:
             settings.save(self.settings)
         except OSError as exc:
@@ -384,7 +411,9 @@ class App(EditorMixin, ParagraphsMixin):
 
         top = tk.Frame(screen, bg=BG)
         top.pack(fill="x", padx=14, pady=(12, 4))
-        ttk.Button(top, text="← Home", command=self.go_home).pack(side="left")
+        home = ttk.Button(top, command=self.go_home)
+        self._show_icon(home, "arrow_left", "← Home", label="Home")
+        home.pack(side="left")
         self.mini_btn = ttk.Button(top, text="Mini view", command=self.enter_mini)
         Tooltip(self.mini_btn, "Mini view",
                 "A small window that stays in front of other apps, showing the latest words, "
@@ -406,36 +435,35 @@ class App(EditorMixin, ParagraphsMixin):
                                     command=self.toggle_pause)
         self.stop_btn = ttk.Button(self.controls_left, text="Stop", style="Accent.TButton", 
                                    command=self.stop_live)
-        self.find_spk_btn = ttk.Button(self.controls_left, text="Find speakers…",
+        self.find_spk_btn = ttk.Button(self.controls_left, text="Find speakers ↗",
                                        style="Accent.TButton", command=self.find_live_speakers)
         self.cancel_btn = ttk.Button(self.controls_left, text="Cancel", style="Accent.TButton",
                                      command=self.cancel_file)
-        self.newfile_btn = ttk.Button(self.controls_left, text="New file…", style="Accent.TButton", 
+        self.newfile_btn = ttk.Button(self.controls_left, text="New file ↗", style="Accent.TButton",
                                       command=self.open_file)
         self.clear_btn = ttk.Button(self.controls_left, text="Clear", command=self.clear)
 
-        self.export_btn = ttk.Button(controls, text="Export…", style="Accent.TButton", command=lambda: export_dialog(self))
-        self.export_btn.pack(side="right")
-        self.save_btn = ttk.Button(controls, text="Save", style="Accent.TButton",
+        # On the right: Merge, the speakers, Save, Export (_layout_right shows the ones that
+        # apply). In merge mode, Merge is faded and Merge N paragraphs and Cancel show inside
+        # the transcript (merge_bar, below)
+        self.controls_right = tk.Frame(controls, bg=BG)
+        self.controls_right.pack(side="right")
+        self.merge_mode_btn = ttk.Button(self.controls_right, text="Merge",
+                                         style="Accent.TButton", command=self.toggle_merge_mode)
+        Tooltip(self.merge_mode_btn, "Merge",
+                "Merges paragraphs that are next to each other and from the same speaker. "
+                "Click it, then check the paragraphs.")
+        self.spk_btn = ttk.Button(self.controls_right, text="", style="Accent.TButton",
+                                  command=lambda: self.open_speakers())
+        Tooltip(self.spk_btn, "Speakers", "Rename, listen to, merge or find the speakers again.")
+        self.save_btn = ttk.Button(self.controls_right, text="Save", style="Accent.TButton",
                                    command=self.save_session)
-        self.save_btn.pack(side="right", padx=(0, 6))
         Tooltip(self.save_btn, "Save session",
                 "Saves the transcript, your corrections and the audio as a .diemut file you "
                 "can open again from the start screen. Ctrl+S; Ctrl+Shift+S saves under a "
                 "new name.")
-        # Merge, centred in the row whatever is on the left and right
-        self.par_tools = tk.Frame(controls, bg=BG)
-        self.par_tools.place(relx=0.5, rely=0, anchor="n")   # top-aligned, like the others
-        # Merge; in merge mode, Merge N paragraphs and Cancel take its place
-        self.merge_mode_btn = ttk.Button(self.par_tools, text="Merge", style="Accent.TButton",
-                                         command=self.toggle_merge_mode)
-        Tooltip(self.merge_mode_btn, "Merge",
-                "Merges paragraphs that are next to each other and from the same speaker. "
-                "Click it, then check the paragraphs.")
-        self.merge_sel_btn = ttk.Button(self.par_tools, text="Merge", style="Accent.TButton",
-                                        command=self.merge_selected)
-        self.merge_cancel_btn = ttk.Button(self.par_tools, text="Cancel", style="Accent.TButton",
-                                           command=lambda: self._set_mode(None))
+        self.export_btn = ttk.Button(self.controls_right, text="Export ↗",
+                                     style="Accent.TButton", command=lambda: export_dialog(self))
         self.ts_labels = {"turns": "Each speaker turn", "paragraphs": "Each paragraph"}
         self.ts_mode = "turns"        # remembered between exports
         self.include_ts = True        # Export's Timestamps box
@@ -490,8 +518,17 @@ class App(EditorMixin, ParagraphsMixin):
         self.text.bind("<ButtonRelease-1>", self._on_text_release)
         self.text.bind("<B1-Motion>", self._on_text_drag)
         self.text.bind(SEEK_BINDING, self._on_text_seek_click)
+        # Merge mode's buttons, at the top of the transcript, over the text
+        self.merge_bar = tk.Frame(body, bg=BG)
+        self.merge_sel_btn = ttk.Button(self.merge_bar, text="Merge", style="Accent.TButton",
+                                        command=self.merge_selected)
+        self.merge_sel_btn.pack(side="left", padx=(0, 6))
+        self.merge_cancel_btn = ttk.Button(self.merge_bar, text="Cancel",
+                                           style="Accent.TButton",
+                                           command=lambda: self._set_mode(None))
+        self.merge_cancel_btn.pack(side="left")
         self.root.bind("<Escape>", lambda e: self._set_mode(None), add="+")
-        self._needle = file_cursor(self.root, "needle", "hand2")
+        self._needle = file_cursor(self.root, "cursor_needle", "pencil")
         aqua = self.root.tk.call("tk", "windowingsystem") == "aqua"
         for seq in (("<Button-2>", "<Control-Button-1>") if aqua else ("<Button-3>",)):
             self.text.bind(seq, self._on_text_menu)
@@ -848,17 +885,32 @@ class App(EditorMixin, ParagraphsMixin):
         else:
             lang = language_name(self.session_language)
         tags = [f"whisper-{self.session_model}", lang]
-        if self.speaker_count:
-            tags.append(f"{self.speaker_count} speaker{'s' if self.speaker_count > 1 else ''}")
+        n = self.speaker_count
+        self.spk_btn.configure(text=f"{n} speaker{'s' if n > 1 else ''} ↗")
+        self._layout_right()
         if self.mode == "live" and self.mic_name:
             name = self.mic_name if len(self.mic_name) <= 28 else self.mic_name[:27] + "…"
             tags.insert(0, f"{MIC_ICON} {name}")
         for t in tags:
             tag = self._tag(self.header_tags, t)
             tag.pack(side="left", padx=(6, 0))
-            if t.endswith(("speaker", "speakers")):
-                tag.configure(cursor="hand2")
-                tag.bind("<Button-1>", lambda e: self.open_speakers())
+
+    def _layout_right(self):
+        """The buttons on the right of the row above the transcript, in order: Merge (once
+        there's a transcript and nothing running), the speakers (once there are labels), Save,
+        Export."""
+        shown = []
+        if self.pieces and not self.busy:
+            shown.append(self.merge_mode_btn)
+        if self.speaker_count:
+            shown.append(self.spk_btn)
+        shown += [self.save_btn, self.export_btn]
+        if [str(w) for w in self.controls_right.pack_slaves()] == [str(w) for w in shown]:
+            return
+        for w in self.controls_right.pack_slaves():
+            w.pack_forget()
+        for w in shown:
+            w.pack(side="left", padx=0 if w is self.export_btn else (0, 6))
 
     def _tick(self):
         if self.mode == "live" and self.live_t0 is not None and self.live_state in (

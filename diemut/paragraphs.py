@@ -208,24 +208,22 @@ class ParagraphsMixin:
                     t.tag_add("merging", ranges[0], ranges[-1])
 
     def _update_par_tools(self):
-        """The centred row: Merge (faded with only one paragraph), or in merge mode,
-        Merge N paragraphs and Cancel."""
-        if self.busy or not self.pieces:
-            self.par_tools.place_forget()
-            return
-        self.par_tools.place(relx=0.5, rely=0, anchor="n")   # centred, top-aligned like the rest
-        for w in self.par_tools.winfo_children():
-            w.pack_forget()
-        if self._mode == "merge":
+        """Merge, on the right above the transcript (faded with only one paragraph, and while
+        merging), and in merge mode, Merge N paragraphs and Cancel at the top of the
+        transcript itself."""
+        self._layout_right()
+        merging = self._mode == "merge" and not self.busy and bool(self.pieces)
+        self.merge_mode_btn.configure(
+            state="normal" if len(self._pars) > 1 and not merging else "disabled")
+        if merging:
             a, b = self._merge_range or (0, -1)
             n = b - a + 1
             self.merge_sel_btn.configure(text=f"Merge {n} paragraphs" if n > 1 else "Merge",
                                          state="normal" if n > 1 else "disabled")
-            self.merge_sel_btn.pack(side="left", padx=(0, 6))
-            self.merge_cancel_btn.pack(side="left")
+            self.merge_bar.place(relx=0.5, y=int(8 * self._scale), anchor="n")
+            self.merge_bar.lift()
         else:
-            self.merge_mode_btn.configure(state="normal" if len(self._pars) > 1 else "disabled")
-            self.merge_mode_btn.pack(side="left")
+            self.merge_bar.place_forget()
 
     def merge_selected(self):
         if self._mode != "merge" or not self._merge_range:

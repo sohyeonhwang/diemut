@@ -27,4 +27,4 @@ diemut = "diemut.__main__:main"
 packages = ["diemut"]
 
 [tool.setuptools.package-data]
-diemut = ["assets/*"]
+diemut = ["assets/*", "assets/icons/*"]

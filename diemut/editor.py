@@ -64,36 +64,45 @@ class EditorMixin:
         row = tk.Frame(ed, bg=SURFACE)
         row.pack(fill="x")
 
-        def button(text, command, title, tip, side="left", pad=(6, 0)):
-            """A symbol button, with its name and shortcut in a tooltip."""
-            b = ttk.Button(row, text=text, width=3, command=command)
+        def button(name, text, command, title, tip, side="left", pad=(6, 0)):
+            """An icon button (assets/icons/<name>; text if the icon is missing), with its
+            name and shortcut in a tooltip."""
+            b = ttk.Button(row, command=command, style="PanelIcon.TButton")
+            self._show_icon(b, name, text, width=3)
             b.pack(side=side, padx=pad)
             Tooltip(b, title, tip)
             return b
 
-        self.play_btn = button(PLAY_LABEL, self.toggle_play, "Play or pause",
-                               "Ctrl+Space. With words selected, plays just those.", pad=0)
-        self.back_btn = button("⟲", lambda: self.skip(-SKIP), "Back 3 seconds", "Alt+←")
-        self.fwd_btn = button("⟳", lambda: self.skip(SKIP), "Forward 3 seconds", "Alt+→")
-        self.loop_btn = ttk.Button(row, text="Loop", style="Toggle.TButton",
-                                   command=self.toggle_loop)
-        self.loop_btn.pack(side="left", padx=(6, 0))
-        Tooltip(self.loop_btn, "Loop",
+        self.play_btn = button("play", PLAY_LABEL, self.toggle_play, "Play/pause (Ctrl+Space)",
+                               "With words selected, plays just those.", pad=0)
+        self.back_btn = button("loop_back", "⟲", lambda: self.skip(-SKIP), "Back 3 s (Alt+←)",
+                               "Jumps back and plays from there.", pad=(2, 0))
+        self.fwd_btn = button("loop_forward", "⟳", lambda: self.skip(SKIP),
+                              "Forward 3 s (Alt+→)", "Jumps forward and plays from there.",
+                              pad=(2, 0))
+        # Loop: a toggle, filled with the accent while it's on
+        self.loop_btn = ttk.Button(row, style="PanelIcon.TButton", command=self.toggle_loop)
+        self._show_icon(self.loop_btn, "loop", "Loop", toggle=True)
+        self.loop_btn.pack(side="left", padx=(2, 0))
+        Tooltip(self.loop_btn, "Loop (Ctrl+L)",
                 "Repeats the selected words or stretch, or the whole paragraph if nothing is "
-                "selected, until you pause. Ctrl+L.")
+                "selected, until you pause.")
         self.speed_box = ttk.Combobox(row, style="Subtle.TCombobox", state="readonly",
                                       font=FONTS["dropdown"], width=4,
                                       values=[self._speed_label(s) for s in reversed(playback.SPEEDS)])
         self.speed_box.set(self._speed_label(1.0))
-        self.speed_box.pack(side="left", padx=(6, 0))
+        self.speed_box.pack(side="left", padx=(10, 0))
         Tooltip(self.speed_box, "Playback speed",
                 "Faster and slower speeds keep voices at their normal pitch. "
                 "Ctrl+↓ and Ctrl+↑ change it.")
         self.speed_box.bind("<<ComboboxSelected>>", self._on_speed)
         self.time_lbl = tk.Label(row, text="", font=FONTS["mono"], fg=DANGER, bg=SURFACE)
         self.time_lbl.pack(side="left", padx=(10, 0))
+        # The speaker, on the right next to the paragraph buttons: "Paragraph by", or with
+        # words selected, "Selection by" (in bold, so the switch shows) and their speaker
         self.spk_frame = tk.Frame(row, bg=SURFACE)
-        self.spk_lbl = tk.Label(self.spk_frame, text="Speaker", fg=TEXT2, bg=SURFACE,
+        self._par_speaker = None    # the paragraph's speaker as chosen (a label in spk_box)
+        self.spk_lbl = tk.Label(self.spk_frame, text="Paragraph by", fg=TEXT2, bg=SURFACE,
                                 font=FONTS["body"])
         self.spk_lbl.pack(side="left", padx=(0, 6))
         self.spk_box = ttk.Combobox(self.spk_frame, style="Subtle.TCombobox", state="readonly",
@@ -101,16 +110,17 @@ class EditorMixin:
         self.spk_box.pack(side="left")
         self.spk_box.bind("<<ComboboxSelected>>", self._on_speaker_choice)
         Tooltip(self.spk_box, "Speaker",
-                lambda: "Gives the selected words to this speaker." if self._text_sel()
-                else "Moves this paragraph to another speaker. Select words first to move "
-                     "just those.")
+                lambda: "Gives the selected words to this speaker, straight away."
+                if self._text_sel() else
+                "Moves this paragraph to another speaker when you save it (Ctrl+Enter). "
+                "Select words first to move just those.")
         self.nav_btns = [
-            button("✕", lambda: self.close_editor(save=True), "Close",
+            button("close", "✕", lambda: self.close_editor(save=True), "Close",
                    "Saves your changes and closes the panel.", side="right", pad=0),
-            button("▼", lambda: self._step(1), "Next paragraph", "Saves this one first.",
-                   side="right", pad=(0, 6)),
-            button("▲", lambda: self._step(-1), "Previous paragraph", "Saves this one first.",
-                   side="right", pad=(0, 6))]
+            button("arrow_down", "▼", lambda: self._step(1), "Next paragraph",
+                   "Saves this one first.", side="right", pad=(0, 2)),
+            button("arrow_up", "▲", lambda: self._step(-1), "Previous paragraph",
+                   "Saves this one first.", side="right", pad=(0, 2))]
 
         # Audio bar: the paragraph's waveform, with a playhead and a selectable stretch, and
         # its start and end times along the bottom
@@ -166,8 +176,12 @@ class EditorMixin:
 
     def _build_hint(self, ed):
         """The main shortcuts under the text box, keys in bold, and More for the rest."""
-        hint = tk.Text(ed, height=2, wrap="word", font=FONTS["small"], fg=MUTED, bg=SURFACE,
-                       relief="flat", bd=0, highlightthickness=0, padx=0, pady=0,
+        # In a frame sized in pixels: a Text's height in lines leaves out the bold keys'
+        # taller line and the gap between lines, which cut off the bottom of the last line
+        box = tk.Frame(ed, bg=SURFACE, height=1)
+        box.pack_propagate(False)
+        hint = tk.Text(box, wrap="word", font=FONTS["small"], fg=MUTED, bg=SURFACE,
+                       relief="flat", bd=0, highlightthickness=0, padx=0, pady=2, spacing2=3,
                        cursor="arrow", takefocus=0)
         hint.tag_configure("key", font=FONTS["small_bold"], foreground=TEXT2)
         hint.tag_configure("more", font=FONTS["small_bold"], foreground=TEXT2, underline=True)
@@ -181,14 +195,26 @@ class EditorMixin:
         hint.configure(state="disabled")
         hint.bind("<Button-1>", lambda e: "break")      # nothing to select or type here
         hint.bind("<B1-Motion>", lambda e: "break")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):   # nothing to scroll here
+            hint.bind(seq, lambda e: "break")
+
+        # Each line is as tall as the taller of the two fonts; the box holds every wrapped line,
+        # the gaps between them and the padding, with a couple of pixels to spare
+        line = max(FONTS["small"].metrics("linespace"), FONTS["small_bold"].metrics("linespace"))
 
         def fit(_event=None):
-            lines = hint.count("1.0", "end", "displaylines")
-            lines = lines[0] if isinstance(lines, tuple) else lines
-            if lines and int(hint.cget("height")) != lines:
-                hint.configure(height=lines)
+            n = hint.count("1.0", "end", "displaylines")
+            n = n[0] if isinstance(n, tuple) else n
+            if not n:
+                return
+            height = n * line + (n - 1) * 3 + 2 * 2 + 4
+            if int(box.cget("height")) != height:
+                box.configure(height=height)
         hint.bind("<Configure>", fit)
-        hint.pack(fill="x")
+        hint.pack(fill="both", expand=True)
+        # Packed ahead of the edit box (at the bottom), so when the panel is short it's the
+        # edit box that gives up room, not this
+        box.pack(side="bottom", fill="x", before=self.edit_box)
 
     @staticmethod
     def _key(action):
@@ -275,9 +301,24 @@ class EditorMixin:
         self._spk_map = dict(zip(labels, ids))
         self._spk_map["New speaker"] = max(ids) + 1
         self.spk_box.configure(values=labels)
-        self.spk_box.set(self._speaker_name(current if current is not None else ids[0]))
-        self.spk_lbl.configure(text="Speaker")
-        self.spk_frame.pack(side="left", padx=(16, 0))
+        self._par_speaker = self._speaker_name(current if current is not None else ids[0])
+        self._show_speaker_for(None)
+        self.spk_frame.pack(side="right", padx=(0, 12))     # left of the paragraph buttons
+
+    def _show_speaker_for(self, selected):
+        """The speaker box for the paragraph (selected None), or for the selected words
+        (char offsets): their speaker, or blank if they have several."""
+        if not selected or self.sel is None:
+            self.spk_lbl.configure(text="Paragraph by", font=FONTS["body"], fg=TEXT2)
+            self.spk_box.set(self._par_speaker or "")
+            return
+        self.spk_lbl.configure(text="Selection by", font=FONTS["header"], fg=TEXT)
+        par = self._pars[self.sel]
+        a, b = selected
+        spans = timing.retime_spans(self.pieces[par["i0"]:par["i1"]],
+                                    self.edit_box.get("1.0", "end-1c"))
+        found = {p.get("speaker") for p, c0, c1 in spans if c1 > a and c0 < b}
+        self.spk_box.set(self._speaker_name(found.pop()) if len(found) == 1 else "")
 
     def _apply_edit(self):
         """Write the editor's text and speaker into the transcript.
@@ -314,7 +355,7 @@ class EditorMixin:
         # Each line typed in the box (Enter) becomes its own paragraph.
         lines = (" ".join(line.split()) for line in self.edit_box.get("1.0", "end-1c").split("\n"))
         new_text = "\n".join(line for line in lines if line)
-        chosen = self._spk_map.get(self.spk_box.get()) if self._spk_map else None
+        chosen = self._spk_map.get(self._par_speaker) if self._spk_map else None
         return (new_text, chosen, new_text != par["text"],
                 chosen is not None and chosen != self.pieces[par["i0"]].get("speaker"))
 
@@ -470,7 +511,9 @@ class EditorMixin:
 
     def _show_playing(self):
         self._shown_playing = self.player.is_playing
-        self.play_btn.configure(text=PAUSE_LABEL if self._shown_playing else PLAY_LABEL)
+        playing = self._shown_playing
+        self._show_icon(self.play_btn, "pause" if playing else "play",
+                        PAUSE_LABEL if playing else PLAY_LABEL, width=3)
 
     def skip(self, seconds):
         """Jump the playhead back (negative) or forward, and play from there."""
@@ -713,7 +756,8 @@ class EditorMixin:
             return
         box = self.edit_box
         selected = self._text_sel()
-        self.spk_lbl.configure(text="Selection" if selected else "Speaker")
+        if self._spk_map:
+            self._show_speaker_for(selected)
         if not selected:
             if self._region_src == "text":
                 self._set_region(None, None)
@@ -740,10 +784,13 @@ class EditorMixin:
         return (a, b) if b > a else None
 
     def _on_speaker_choice(self, _event=None):
-        """With words selected, give just those words to the chosen speaker."""
+        """With words selected, give just those words to the chosen speaker; otherwise,
+        choose the paragraph's speaker (saved with the correction)."""
         self.spk_box.selection_clear()
-        self._show_unsaved()
         selected = self._text_sel()
+        if not selected:
+            self._par_speaker = self.spk_box.get()   # applied when the correction is saved
+        self._show_unsaved()
         chosen = self._spk_map.get(self.spk_box.get())
         if self.sel is None or not selected or chosen is None:
             return

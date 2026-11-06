@@ -125,7 +125,7 @@ class SpeakersWindow:
 
         bottom = tk.Frame(win, bg=BG)
         bottom.pack(fill="x", pady=(14, 0))
-        self.again_btn = ttk.Button(bottom, text="Find speakers again…", style="Accent.TButton",
+        self.again_btn = ttk.Button(bottom, text="Find speakers again ↗", style="Accent.TButton",
                                     command=self.find_again)
         self.again_btn.pack(side="left")
         ttk.Button(bottom, text="Close", command=self.close).pack(side="right")
@@ -354,10 +354,13 @@ class FindWindow:
 
         bottom = tk.Frame(win, bg=BG)
         bottom.pack(fill="x", pady=(14, 0))
-        for text, step, title in (("▲", -1, "Previous"), ("▼", 1, "Next")):
-            b = ttk.Button(bottom, text=text, width=3, command=lambda s=step: self.step(s))
+        for name, text, step, title in (("arrow_up", "▲", -1, "Previous"),
+                                        ("arrow_down", "▼", 1, "Next")):
+            b = ttk.Button(bottom, command=lambda s=step: self.step(s), style="Icon.TButton")
+            app._show_icon(b, name, text, width=3)
             b.pack(side="left", padx=(0, 6))
-            Tooltip(b, title, f"{title} match ({'Shift+Enter' if step < 0 else 'Enter'}).")
+            Tooltip(b, f"{title} match ({'Shift+Enter' if step < 0 else 'Enter'})",
+                    "Goes round to the other end after the last one.")
         self.all_btn = ttk.Button(bottom, text="Replace all", style="Accent.TButton",
                                   command=lambda: self.replace(every=True))
         self.all_btn.pack(side="right")
@@ -531,7 +534,9 @@ def settings_window(app):
             ("hover_hints", "Show hover hints",
              "Short explanations when the mouse rests on a button or box."),
             ("leave_out_fillers", "Leave out fillers and false starts when exporting",
-             "Whether Export starts with this ticked. The transcript always keeps them.")):
+             "Whether Export starts with this ticked. The transcript always keeps them."),
+            ("hand_drawn_icons", "Hand-drawn icons",
+             "The ink drawings on buttons. Untick for plain symbols.")):
         var = tk.BooleanVar(value=app.settings[key])
         ttk.Checkbutton(win, text=label, variable=var,
                         command=lambda k=key, v=var: app.change_setting(k, v.get())).pack(
@@ -632,7 +637,7 @@ def export_dialog(app):
 
     row = tk.Frame(win, bg=BG)
     row.pack(fill="x", pady=(14, 0))
-    ttk.Button(row, text="Export…", style="Accent.TButton", command=go).pack(side="right")
+    ttk.Button(row, text="Export ↗", style="Accent.TButton", command=go).pack(side="right")
     ttk.Button(row, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 6))
     win.bind("<Return>", go)
     win.bind("<Escape>", lambda e: win.destroy())
