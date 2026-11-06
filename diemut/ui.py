@@ -13,15 +13,16 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import export, fillers, history, playback, sessions, settings, speakers, transcribe
+from . import (export, find, fillers, history, playback, sessions, settings, speakers, timing,
+               transcribe)
 from .dialogs import (REPLACES_LABELS, SPEAKER_COUNTS, ask_choice, ask_speaker_count, count_label,
-                      export_dialog, settings_window, SpeakersWindow, Tooltip)
+                      export_dialog, settings_window, FindWindow, SpeakersWindow, Tooltip)
 from .editor import SEEK_BINDING, EditorMixin
 from .export import fmt_time
 from .languages import AUTO, BEST_SUPPORTED, LANGUAGES, MULTI, language_name
 from .paragraphs import ParagraphsMixin
 from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FILE_ICON, FONTS, HOVER, LOCK, MIC_ICON,
-                    MUTED, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, display_scale,
+                    MUTED, PLAYING, SETTINGS_ICON, SURFACE, TEXT, TEXT2, WINDOWS, display_scale,
                     file_cursor, setup_style)
 
 MEDIA_TYPES = ("*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
@@ -58,6 +59,7 @@ class App(EditorMixin, ParagraphsMixin):
         self._settings_win = None
         self._speakers_win = None
         self._shortcuts_win = None
+        self._find_win = None
         self.history = history.History()   # undo and redo for the transcript
         self._relabel = False       # finding speakers again (so its result can be undone)
         self.mini_active = False
@@ -98,6 +100,8 @@ class App(EditorMixin, ParagraphsMixin):
         root.bind("<Control-z>", lambda e: self._undo_key(False))
         root.bind("<Control-y>", lambda e: self._undo_key(True))
         root.bind("<Control-Z>", lambda e: self._undo_key(True))       # Ctrl+Shift+Z
+        root.bind("<Control-f>", lambda e: self.open_find())
+        root.bind("<Control-F>", lambda e: self.open_find())
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_icon(self):
@@ -473,6 +477,9 @@ class App(EditorMixin, ParagraphsMixin):
         self.text.tag_configure("placeholder", foreground=MUTED)
         self.text.tag_configure("selected", background=TEXT, foreground=BG)
         self.text.tag_configure("merging", background=TEXT, foreground=BG)   # checked, merging
+        # Find's matches (FindWindow), above the open paragraph's highlight so they show in it
+        self.text.tag_configure("found", background=PLAYING, foreground=TEXT)
+        self.text.tag_configure("found_now", background=DANGER, foreground=BG)
         self.text.bind("<Button-1>", self._on_text_press)
         self.text.bind("<ButtonRelease-1>", self._on_text_release)
         self.text.bind("<B1-Motion>", self._on_text_drag)
@@ -569,8 +576,9 @@ class App(EditorMixin, ParagraphsMixin):
         """Close the panel and windows, and forget the transcript."""
         self._set_mode(None)
         self.close_editor(save=False)
-        if self._speakers_win is not None:
-            self._speakers_win.close()
+        for win in (self._speakers_win, self._find_win):
+            if win is not None:
+                win.close()
         self._clear_transcript()
 
     def _clear_transcript(self):
@@ -870,6 +878,8 @@ class App(EditorMixin, ParagraphsMixin):
                 t.insert("end", placeholder, "placeholder")
             t.configure(state="disabled", cursor=self._text_cursor())
             self._update_par_tools()
+            if self._find_win is not None:
+                self._find_win.refresh()
             return
         first_line = True
         use_speakers = self.speaker_count > 1
@@ -909,6 +919,8 @@ class App(EditorMixin, ParagraphsMixin):
         self._show_open_paragraph(scroll=False)
         self._draw_merge()
         self._update_par_tools()
+        if self._find_win is not None:
+            self._find_win.refresh()
 
     def _append_piece(self, piece):
         first = not self.pieces
@@ -1025,6 +1037,54 @@ class App(EditorMixin, ParagraphsMixin):
         self.sel = None
         self._speakers_changed(f"Redid the {label}." if redo else
                                f"Undid the {label}. Ctrl+Y redoes it.")
+
+    # ------------------------------------------------------ find and replace --
+    def open_find(self):
+        """Ctrl+F: the Find window, starting from the text selected, if any."""
+        if not self.transcript_screen.winfo_ismapped():
+            return None
+        self._set_mode(None)
+        picked = ""
+        for w in (self.text, self.edit_box):
+            if w.tag_ranges("sel"):
+                picked = w.get("sel.first", "sel.last")
+                break
+        if self._find_win is None:
+            self._find_win = FindWindow(self)
+        if picked and "\n" not in picked:
+            self._find_win.query.set(picked)
+        self._find_win.focus()
+        return "break"
+
+    def replace_matches(self, spans, new):
+        """Replace these matches [(paragraph, start, end)] with new, exactly as typed, as one
+        undo step. Unchanged words keep their times (timing.retime), as in a correction, and
+        an open paragraph stays open."""
+        if self.busy or not spans:
+            return
+        self._set_mode(None)
+        open_i0 = self._save_edit()
+        self._checkpoint("replacement" if len(spans) == 1 else "replacements")
+        by_par = {}
+        for k, s, e in spans:
+            by_par.setdefault(k, []).append((s, e))
+        shift = 0          # how far the open paragraph's first piece moves
+        for k in sorted(by_par, reverse=True):     # from the end, so i0 / i1 stay right
+            par = self._pars[k]
+            i0, i1 = par["i0"], par["i1"]
+            new_pieces = timing.retime(self.pieces[i0:i1],
+                                       find.replace_spans(par["text"], by_par[k], new))
+            if open_i0 is not None and i0 < open_i0:
+                shift += len(new_pieces) - (i1 - i0)
+            self.pieces[i0:i1] = new_pieces
+        self.sel = None
+        self.dirty = True
+        self._render_all()
+        if open_i0 is not None and self._pars:
+            self.open_editor(self._par_at_piece(open_i0 + shift))
+        n = len(spans)
+        self.status_lbl.configure(text=f"Replaced {n} {'match' if n == 1 else 'matches'}. "
+                                       "Ctrl+Z undoes it.")
 
     def _undo_key(self, redo):
         """Ctrl+Z / Ctrl+Y, unless a text box with its own undo is being typed in."""

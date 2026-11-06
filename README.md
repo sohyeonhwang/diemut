@@ -200,6 +200,7 @@ Keyboard shortcuts, which all work while you're typing in the text box:
 | Enter | Split the paragraph at the cursor |
 | Ctrl+Enter | Save the correction |
 | Esc | Discard your changes and close the panel |
+| Ctrl+F | Find and replace in the transcript |
 | Ctrl+S | Save the session (Ctrl+Shift+S saves it under a new name) |
 | Ctrl+Z / Ctrl+Y | In the text box: undo or redo your typing. Elsewhere: undo or redo the last change to the transcript |
 
@@ -227,7 +228,9 @@ The window stays usable while speakers are being found, and **Cancel** stops str
 
 **Filler words and false starts.** For English, `diemut` transcribes word for word: it keeps "um", "uh" and false starts like "it was- it was" (Whisper usually tidies these away). In the transcript they're shown in grey. To leave them out of an export, tick **Leave out fillers (um, uh…) and false starts** in the Export dialog; your transcript keeps them. To have it ticked every time, turn it on in **Settings**. Only non-word fillers (um, uh, er, ah, hmm, mm…) are left out; words like "like" and "you know" stay, because they're often meant. A single word repeated for emphasis ("very, very good") stays too.
 
-**Undo.** **Ctrl+Z** undoes the last change to the transcript, and **Ctrl+Y** (or Ctrl+Shift+Z) redoes it: a saved correction, a paragraph split or merge, a speaker change, a rename or merge in the Speakers window, or new speaker labels from *Find speakers again…*. Up to 30 changes are kept. While you're typing in the correction box, Ctrl+Z undoes your typing instead; the transcript's undo is also in the right-click menu and the Speakers window. Starting a new transcript or opening a session starts a fresh undo history.
+**Find and replace.** **Ctrl+F** opens a small Find window (starting with any text you'd selected). As you type, every match in the transcript is highlighted in yellow, and the current one in pink; **Enter** or **▼** goes to the next one and **Shift+Enter** or **▲** to the previous one. Speaker names and times aren't searched. **Match case** tells "Ann" from "ann"; **Regular expression** lets you search with a [Python regular expression](https://docs.python.org/3/howto/regex.html), for example `\bAnn\b` for "Ann" but not "Anna". **Replace** changes the current match and goes on to the next, and **Replace all** changes every match at once (for example, fixing a misspelled name everywhere). What you type in the Replace box goes in exactly as typed. Like a correction, words you didn't change keep their timings, and each replace is one step for **Ctrl+Z**. **Esc** closes the window.
+
+**Undo.** **Ctrl+Z** undoes the last change to the transcript, and **Ctrl+Y** (or Ctrl+Shift+Z) redoes it: a saved correction, a paragraph split or merge, a speaker change, a rename or merge in the Speakers window, a replace, or new speaker labels from *Find speakers again…*. Up to 30 changes are kept. While you're typing in the correction box, Ctrl+Z undoes your typing instead; the transcript's undo is also in the right-click menu and the Speakers window. Starting a new transcript or opening a session starts a fresh undo history.
 
 **Saving sessions.** **Save** (next to Export…, or **Ctrl+S**) keeps everything as a `.diemut` file: the transcript, your corrections, speaker names, paragraph splits and merges, and the audio, so you can open it again later from the start screen with **Open saved session…** and carry on listening and correcting. The first save asks where to put it; after that, Save updates the same file, and **Ctrl+Shift+S** saves it under a new name. The window title shows the file's name, with a `*` in front while there are changes you haven't saved. A `.diemut` file is about 25 MB per hour of audio (the audio is kept losslessly) and stays on your computer like any other file.
 
@@ -295,7 +298,8 @@ diemut/
 ├── ui.py           the window: start screen, transcript screen, live mini view
 ├── editor.py       the correction panel (listen, correct, save)
 ├── paragraphs.py   merging and splitting paragraphs
-├── dialogs.py      small windows: Speakers, Export, Settings, Shortcuts, questions, tooltips
+├── dialogs.py      small windows: Speakers, Export, Settings, Shortcuts, Find, questions, tooltips
+├── find.py         finding and replacing text
 ├── theme.py        colours, fonts, button styles and mouse pointers
 ├── transcribe.py   Whisper (files and live), model choices, live-mode timing
 ├── speakers.py     speaker labels and paragraph grouping
@@ -353,7 +357,6 @@ More in the Settings window, for choosing and adding models without editing code
 
 **Working with transcripts**
 - Highlight words Whisper was unsure about (it reports a confidence for each word), so reviewing goes straight to the likely mistakes.
-- Find, and find-and-replace across the whole transcript (for example, fixing a misspelled name everywhere at once): a small pop-up opened with Ctrl+F, with Replace and Replace all (undoable).
 - A copy-edit helper for punctuation and obvious word fixes: a small language model, run locally like Whisper, that suggests corrections for a paragraph and shows each change clearly so it can be accepted or rejected.
 - Keep fillers and false starts in languages other than English, too: the word-for-word prompt needs a short example sentence in each language, ideally checked by a speaker of it.
 

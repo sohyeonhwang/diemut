@@ -1,12 +1,14 @@
 """Small windows: tooltips, the Speakers window, the speaker-count and Export dialogs, the
-list of shortcuts, Settings, and a question with a few choices."""
+list of shortcuts, Settings, Find and replace, and a question with a few choices."""
 
+import re
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import playback, transcribe
+from . import find, playback, transcribe
 from .export import fmt_time
-from .theme import ACCENT, BG, BORDER, BORDER_STRONG, FONTS, MUTED, TEXT, TEXT2, display_scale
+from .theme import (ACCENT, BG, BORDER, BORDER_STRONG, DANGER, FONTS, MUTED, TEXT, TEXT2,
+                    display_scale)
 
 SPEAKER_COUNTS = (None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 
@@ -305,6 +307,162 @@ def ask_choice(parent, title, message, choices):
     win.focus_set()
     parent.wait_window(win)
     return result.get("key")
+
+
+class FindWindow:
+    """Find (Ctrl+F) and replace in the transcript's text. Every match is tagged "found" in
+    the transcript and the current one "found_now"; refresh() redoes them after each redraw.
+    One window at a time (App._find_win)."""
+
+    def __init__(self, app):
+        self.app = app
+        self.found = []           # [(paragraph, start, end)]
+        self.current = None       # index into found
+        self._resume = None       # (paragraph, offset) to go on from after a Replace
+        win = self.win = make_dialog(app.root, "Find")
+        win.protocol("WM_DELETE_WINDOW", self.close)
+        win.bind("<Escape>", lambda e: self.close())
+        win.bind("<Control-f>", lambda e: self.focus())
+        win.bind("<Control-F>", lambda e: self.focus())
+
+        grid = tk.Frame(win, bg=BG)
+        grid.pack(fill="x")
+        self.query, self.new = tk.StringVar(), tk.StringVar()
+        entries = []
+        for r, (label, var) in enumerate((("Find", self.query), ("Replace", self.new))):
+            tk.Label(grid, text=label, font=FONTS["body"], fg=TEXT2, bg=BG).grid(
+                row=r, column=0, sticky="w", padx=(0, 10), pady=3)
+            entry = tk.Entry(grid, textvariable=var, font=FONTS["body"], fg=TEXT, bg=BG,
+                             relief="flat", highlightthickness=1, highlightbackground=BORDER,
+                             highlightcolor=ACCENT, width=30, insertbackground=TEXT)
+            entry.grid(row=r, column=1, sticky="w", pady=3, ipady=2)
+            entries.append(entry)
+        self.find_entry, replace_entry = entries
+        self.count_lbl = tk.Label(grid, text="", font=FONTS["small"], fg=TEXT2, bg=BG,
+                                  width=14, anchor="w")
+        self.count_lbl.grid(row=0, column=2, sticky="w", padx=(10, 0))
+
+        checks = tk.Frame(win, bg=BG)
+        checks.pack(fill="x", pady=(6, 0))
+        self.match_case, self.regex = tk.BooleanVar(), tk.BooleanVar()
+        ttk.Checkbutton(checks, text="Match case", variable=self.match_case).pack(side="left")
+        regex = ttk.Checkbutton(checks, text="Regular expression", variable=self.regex)
+        regex.pack(side="left", padx=(14, 0))
+        Tooltip(regex, "Regular expression",
+                "Find with a Python regular expression. The replacement goes in exactly as "
+                "typed.")
+
+        bottom = tk.Frame(win, bg=BG)
+        bottom.pack(fill="x", pady=(14, 0))
+        for text, step, title in (("▲", -1, "Previous"), ("▼", 1, "Next")):
+            b = ttk.Button(bottom, text=text, width=3, command=lambda s=step: self.step(s))
+            b.pack(side="left", padx=(0, 6))
+            Tooltip(b, title, f"{title} match ({'Shift+Enter' if step < 0 else 'Enter'}).")
+        self.all_btn = ttk.Button(bottom, text="Replace all", style="Accent.TButton",
+                                  command=lambda: self.replace(every=True))
+        self.all_btn.pack(side="right")
+        self.one_btn = ttk.Button(bottom, text="Replace", command=self.replace)
+        self.one_btn.pack(side="right", padx=(0, 6))
+
+        self.find_entry.bind("<Return>", lambda e: self.step(1))
+        self.find_entry.bind("<Shift-Return>", lambda e: self.step(-1))
+        replace_entry.bind("<Return>", lambda e: self.replace())
+        for var in (self.query, self.match_case, self.regex):
+            var.trace_add("write", lambda *_: self.search())
+        show_dialog(win, app.root)
+        self.focus()
+
+    def focus(self):
+        self.win.deiconify()
+        self.win.lift()
+        self.find_entry.focus_set()
+        self.find_entry.select_range(0, "end")
+
+    def search(self):
+        """Find the matches afresh, starting from the first one in view."""
+        self.current = None
+        self.refresh()
+        self._show_current()
+
+    def refresh(self):
+        """Redo the matches and their highlights from the transcript as it is now. The current
+        match stays the one at (or after) the same place."""
+        t = self.app.text
+        place = self._resume or (self.found[self.current][:2] if self.current is not None
+                                 else None)
+        self._resume = None
+        try:
+            pattern = find.compile_query(self.query.get(), self.match_case.get(),
+                                         self.regex.get())
+        except re.error:
+            pattern, error = None, True
+        else:
+            error = False
+        self.found = find.matches([p["text"] for p in self.app._pars], pattern)
+        if not self.found:
+            self.current = None
+        elif place is not None:
+            self.current = next((i for i, m in enumerate(self.found) if m[:2] >= place), 0)
+        else:   # the first match in view
+            top = t.index("@0,0")
+            self.current = next((i for i, m in enumerate(self.found)
+                                 if t.compare(self._index(*m[:2]), ">=", top)), 0)
+        t.tag_remove("found", "1.0", "end")
+        t.tag_remove("found_now", "1.0", "end")
+        for i, (k, s, e) in enumerate(self.found):
+            t.tag_add("found_now" if i == self.current else "found",
+                      self._index(k, s), self._index(k, e))
+        n = len(self.found)
+        self.count_lbl.configure(
+            text="Not a valid pattern" if error else
+            f"{self.current + 1} of {n}" if n else "No matches" if pattern else "",
+            fg=DANGER if error else TEXT2)
+        state = "normal" if n and not self.app.busy else "disabled"
+        self.one_btn.configure(state=state)
+        self.all_btn.configure(state=state)
+
+    def _index(self, k, offset):
+        start = self.app.text.tag_ranges(f"ptext:{k}")[0]
+        return f"{start}+{offset}c"
+
+    def _show_current(self):
+        if self.current is not None:
+            k, s, e = self.found[self.current]
+            self.app.text.see(self._index(k, e))
+            self.app.text.see(self._index(k, s))
+
+    def step(self, direction):
+        """Go to the next (1) or previous (-1) match, round the end."""
+        if self.found:
+            k, s, _ = self.found[(self.current + direction) % len(self.found)]
+            self._resume = (k, s)
+            self.refresh()
+            self._show_current()
+        return "break"
+
+    def replace(self, every=False):
+        """Replace the current match and go on to the next, or replace them all."""
+        app = self.app
+        if app.busy or not self.found:
+            return "break"
+        app._save_edit()        # the open correction first; its redraw refreshes the matches
+        if not self.found:
+            return "break"
+        new = self.new.get()
+        spans = self.found if every else [self.found[self.current]]
+        if not every:
+            k, s, _ = spans[0]
+            self._resume = (k, s + len(new))
+        app.replace_matches(spans, new)
+        self._show_current()
+        self.focus()
+        return "break"
+
+    def close(self):
+        self.app.text.tag_remove("found", "1.0", "end")
+        self.app.text.tag_remove("found_now", "1.0", "end")
+        self.win.destroy()
+        self.app._find_win = None
 
 
 def shortcuts_window(app, shortcuts):
