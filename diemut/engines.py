@@ -8,7 +8,8 @@ per-word times, so the rest of diemut doesn't care which one is running. An engi
     device                       where the loaded model runs: "cuda", "gpu", "cpu"…
     label()                      both, for the header tag: "OpenVINO · GPU"
     loaded(model) -> bool        is that model ready?
-    load(model)                  load it (downloading it the first time)
+    load(model, status=None)     load it (downloading it the first time, with retries);
+                                 status(message) says what's happening
     fall_back_to_cpu()           after a GPU error
     is_gpu_error(exc) -> bool
     detect_language(audio) -> language code
@@ -19,7 +20,9 @@ per-word times, so the rest of diemut doesn't care which one is running. An engi
 quick is for live mode's short chunks: the fastest settings, without carrying text over.
 """
 
+import os
 import re
+import time
 from pathlib import Path
 
 SAMPLE_RATE = 16000
@@ -65,6 +68,25 @@ def windows_from_speech(regions, cuts=(), longest=WINDOW):
     return out
 
 
+_NOT_THERE = {"RepositoryNotFoundError", "GatedRepoError", "RevisionNotFoundError",
+              "EntryNotFoundError"}
+
+
+def download(fetch, what, status=None, tries=3):
+    """fetch() (a model download), tried again when the connection drops: Hugging Face
+    sometimes closes it partway, and a new try carries on from what's already there."""
+    for attempt in range(1, tries + 1):
+        try:
+            return fetch()
+        except Exception as exc:
+            if attempt == tries or type(exc).__name__ in _NOT_THERE:
+                raise
+            if status:
+                status(f"The download of {what} was interrupted. Trying again "
+                       f"({attempt + 1} of {tries})…")
+            time.sleep(3 * attempt)
+
+
 def without_ellipses(text):
     """text without "..." / "…": OpenVINO copies them from the earlier text it's given as
     context, so in live mode one hesitation turned into dozens (faster-whisper doesn't)."""
@@ -105,9 +127,12 @@ class FasterWhisper:
     def loaded(self, model):
         return self.model is not None and self.key == (model, self.force_cpu)
 
-    def load(self, model):
-        from faster_whisper import WhisperModel
+    def load(self, model, status=None):
+        from faster_whisper import WhisperModel, download_model
         self.model = None
+        # Downloaded first (with retries), then loaded from the folder
+        path = model if os.path.isdir(model) else download(
+            lambda: download_model(model), f"whisper-{model}", status)
         attempts = [("cpu", "int8")]
         if not self.force_cpu:
             try:
@@ -119,7 +144,7 @@ class FasterWhisper:
         last_error = None
         for device, compute_type in attempts:      # the GPU if it works, otherwise the CPU
             try:
-                self.model = WhisperModel(model, device=device, compute_type=compute_type)
+                self.model = WhisperModel(path, device=device, compute_type=compute_type)
                 self.key, self.device = (model, self.force_cpu), device
                 return
             except Exception as exc:
@@ -184,7 +209,7 @@ class OpenVINO:
     def loaded(self, model):
         return self.pipe is not None and self.key == (model, self.force_cpu)
 
-    def load(self, model):
+    def load(self, model, status=None):
         import openvino as ov
         import openvino_genai as ov_genai
         from huggingface_hub import snapshot_download
@@ -193,7 +218,7 @@ class OpenVINO:
         self.pipe = None
         repo = self.REPO.format(model)
         try:
-            path = snapshot_download(repo)
+            path = download(lambda: snapshot_download(repo), f"whisper-{model}", status)
         except Exception as exc:
             if type(exc).__name__ in ("RepositoryNotFoundError", "GatedRepoError"):
                 raise RuntimeError(f"there's no OpenVINO copy of whisper-{model}") from exc
@@ -203,6 +228,9 @@ class OpenVINO:
             "GPU" if "GPU" in ov.Core().available_devices else "CPU")
         cache = Path(HOME) / "openvino_cache"       # compiled models: later loads are faster
         cache.mkdir(parents=True, exist_ok=True)
+        if status and device == "GPU":
+            status(f"Preparing whisper-{model} for the graphics card… (the first time can take "
+                   "a minute or two)")
         self.pipe = ov_genai.WhisperPipeline(path, device, word_timestamps=True,
                                              CACHE_DIR=str(cache))
         self.key, self.device = (model, self.force_cpu), device.lower()

@@ -141,14 +141,14 @@ class SpeechToText:
                 status(f"Loading whisper-{name} with {self.engine.name}… (the first use "
                        f"{first})")
                 try:
-                    self.engine.load(name)
+                    self.engine.load(name, status)
                 except Exception as exc:
                     if isinstance(self.engine, engines.FasterWhisper):
                         raise
                     status(f"{self.engine.name} didn't load, so diemut is using "
                            f"faster-whisper instead. ({exc})")
                     self.engine = engines.FasterWhisper()
-                    self.engine.load(name)
+                    self.engine.load(name, status)
             return self.engine
 
     def fall_back_to_cpu(self):
