@@ -19,6 +19,7 @@ per-word times, so the rest of diemut doesn't care which one is running. An engi
 quick is for live mode's short chunks: the fastest settings, without carrying text over.
 """
 
+import re
 from pathlib import Path
 
 SAMPLE_RATE = 16000
@@ -62,6 +63,12 @@ def windows_from_speech(regions, cuts=(), longest=WINDOW):
         else:
             out.append((a, b))
     return out
+
+
+def without_ellipses(text):
+    """text without "..." / "…": OpenVINO copies them from the earlier text it's given as
+    context, so in live mode one hesitation turned into dozens (faster-whisper doesn't)."""
+    return " ".join(re.sub(r"\.{2,}|…", " ", text).split())
 
 
 def spaced_words(text, words, spaced=True):
@@ -245,7 +252,8 @@ class OpenVINO:
                            "word_timestamps": True}
                 if fixed:
                     options["language"] = f"<|{fixed}|>"
-                start = " ".join(p for p in (prompt, before if not quick else "") if p)
+                start = without_ellipses(" ".join(p for p in (prompt, before if not quick
+                                                              else "") if p))
                 if start:
                     options["initial_prompt"] = start
                 result = self.pipe.generate(chunk.tolist(), **options)
